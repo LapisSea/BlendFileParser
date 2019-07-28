@@ -3,7 +3,6 @@ package com.lapissea.blendfileparser;
 import com.lapissea.util.NotNull;
 import com.lapissea.util.UtilL;
 import com.lapissea.util.function.TriFunction;
-import com.lapissea.vec.Vec3f;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -192,10 +191,9 @@ public class TypeOptimizations{
 		
 		@Override
 		protected void readValues(int count, BlendInputStream in) throws IOException{
-			var   buffB=ByteBuffer.allocate(struct.length).order(blend.header.order);
-			var   arr  =buffB.array();
-			var   buff =buffB.asFloatBuffer();
-			Vec3f vec  =new Vec3f();
+			var buffB=ByteBuffer.allocate(struct.length).order(blend.header.order);
+			var arr  =buffB.array();
+			var buff =buffB.asFloatBuffer();
 			
 			co=new float[count*3];
 			no=new float[count*3];
@@ -209,10 +207,15 @@ public class TypeOptimizations{
 				co[off+1]=buffB.getFloat();
 				co[off+2]=buffB.getFloat();
 //				buffB.position(12);
-				vec.set(buffB.getShort(), buffB.getShort(), buffB.getShort()).normalise();
-				no[off+0]=vec.x();
-				no[off+1]=vec.y();
-				no[off+2]=vec.z();
+				
+				float no0=buffB.getShort();
+				float no1=buffB.getShort();
+				float no2=buffB.getShort();
+				
+				float length=(float)Math.sqrt(no0*no0+no1*no1+no2*no2);
+				no[off+0]=no0/length;
+				no[off+1]=no1/length;
+				no[off+2]=no2/length;
 			}
 
 //			LogUtil.println(co);

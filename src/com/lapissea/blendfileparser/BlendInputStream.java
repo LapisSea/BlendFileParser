@@ -6,6 +6,7 @@ import com.lapissea.util.NotNull;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
 public class BlendInputStream extends InputStream{
 	
@@ -90,18 +91,20 @@ public class BlendInputStream extends InputStream{
 	}
 	
 	public String[] readNullTerminatedUTF8Array(int arraySize) throws IOException{
-		String[] array=new String[arraySize];
-		
-		StringBuilder sb=new StringBuilder();
-		
+		String[]   array=new String[arraySize];
+		ByteBuffer bb   =ByteBuffer.allocate(64);
 		for(int i=0;i<array.length;i++){
 			int code;
-			while(true){
-				code=read();
-				if(code==0) break;
-				sb.append((char)code);
+			while((code=read())!=0){
+				if(!bb.hasRemaining()){
+					var old=bb;
+					bb=ByteBuffer.allocate(bb.capacity()<<1);
+					bb.put(old.flip());
+				}
+				bb.put((byte)code);
 			}
-			array[i]=sb.toString();
+			array[i]=new String(bb.array(), 0, bb.position(), StandardCharsets.UTF_8);
+			bb.clear();
 		}
 		return array;
 	}
