@@ -1,9 +1,9 @@
 package com.lapissea.blendfileparser;
 
+import com.lapissea.util.NotNull;
 import com.lapissea.util.UtilL;
 import com.lapissea.util.function.TriFunction;
 import com.lapissea.vec.Vec3f;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -12,16 +12,17 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+@SuppressWarnings({"unchecked", "PointlessArithmeticExpression"})
 public class TypeOptimizations{
 	
-	public abstract static class InstanceComposit<SELF extends InstanceComposit<SELF>>{
+	public abstract static class InstanceComposite<SELF extends InstanceComposite<SELF>>{
 		private   FileBlockHeader blockHeader;
 		protected BlendFile       blend;
 		protected Struct          struct;
 		
 		public final int count;
 		
-		public InstanceComposit(Struct struct, FileBlockHeader blockHeader, BlendFile blend){
+		public InstanceComposite(Struct struct, FileBlockHeader blockHeader, BlendFile blend){
 			count=blockHeader.count;
 			this.blockHeader=blockHeader;
 			this.blend=blend;
@@ -44,7 +45,7 @@ public class TypeOptimizations{
 		
 	}
 	
-	public static class MPoly extends InstanceComposit<MPoly> implements Iterable<MPoly.View>{
+	public static class MPoly extends InstanceComposite<MPoly> implements Iterable<MPoly.View>{
 		
 		public int[]   loopstart;
 		public int[]   totloop;
@@ -112,13 +113,14 @@ public class TypeOptimizations{
 			}
 		}
 		
+		@NotNull
 		@Override
-		public @NotNull Iterator<View> iterator(){
+		public Iterator<View> iterator(){
 			return new View();
 		}
 	}
 	
-	public static class MEdge extends InstanceComposit<MEdge> implements Iterable<MEdge.View>{
+	public static class MEdge extends InstanceComposite<MEdge> implements Iterable<MEdge.View>{
 		private int[] v1;
 		private int[] v2;
 		
@@ -173,13 +175,14 @@ public class TypeOptimizations{
 			}
 		}
 		
+		@NotNull
 		@Override
-		public @NotNull Iterator<MEdge.View> iterator(){
+		public Iterator<MEdge.View> iterator(){
 			return new MEdge.View();
 		}
 	}
 	
-	public static class MVert extends InstanceComposit<MVert> implements Iterable<MVert.View>{
+	public static class MVert extends InstanceComposite<MVert> implements Iterable<MVert.View>{
 		public float[] co;
 		public float[] no;
 		
@@ -252,13 +255,14 @@ public class TypeOptimizations{
 			}
 		}
 		
+		@NotNull
 		@Override
-		public @NotNull Iterator<MVert.View> iterator(){
+		public Iterator<MVert.View> iterator(){
 			return new MVert.View();
 		}
 	}
 	
-	public static class MLoop extends InstanceComposit<MLoop> implements Iterable<MLoop.View>{
+	public static class MLoop extends InstanceComposite<MLoop> implements Iterable<MLoop.View>{
 		public int[] v;
 		public int[] e;
 		
@@ -312,13 +316,14 @@ public class TypeOptimizations{
 			}
 		}
 		
+		@NotNull
 		@Override
-		public @NotNull Iterator<MLoop.View> iterator(){
+		public Iterator<MLoop.View> iterator(){
 			return new MLoop.View();
 		}
 	}
 	
-	public static class MLoopUV extends InstanceComposit<MLoopUV> implements Iterable<MLoopUV.View>{
+	public static class MLoopUV extends InstanceComposite<MLoopUV> implements Iterable<MLoopUV.View>{
 		private float[] uv;
 		
 		public MLoopUV(Struct struct, FileBlockHeader blockHeader, BlendFile blend){
@@ -364,15 +369,16 @@ public class TypeOptimizations{
 			
 		}
 		
+		@NotNull
 		@Override
-		public @NotNull Iterator<MLoopUV.View> iterator(){
+		public Iterator<MLoopUV.View> iterator(){
 			return new MLoopUV.View();
 		}
 	}
 	
 	private static void register(Dna1 dna,
-	                             Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposit>> map, String name,
-	                             TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposit> func,
+	                             Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposite>> map, String name,
+	                             TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposite> func,
 	                             String... names){
 		var struct=dna.getStruct(name);
 		if(names.length==0) throw new RuntimeException();
@@ -384,8 +390,8 @@ public class TypeOptimizations{
 		map.put(name, func);
 	}
 	
-	public static Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposit>> get(Dna1 dna){
-		Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposit>> result=new HashMap<>();
+	public static Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposite>> get(Dna1 dna){
+		Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposite>> result=new HashMap<>();
 		
 		register(dna, result, "MVert", MVert::new, "co", "no", "flag", "bweight");
 		register(dna, result, "MLoop", MLoop::new, "v", "e");

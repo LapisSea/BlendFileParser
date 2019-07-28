@@ -1,20 +1,18 @@
 package com.lapissea.blendfileparser;
 
+import com.lapissea.util.NotNull;
 import com.lapissea.util.TextUtil;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
 
 class StructLinkedList implements List<Struct.Instance>{
 	
-	public static final Struct.Instance[] INS=new Struct.Instance[0];
+	private static final Struct.Instance[] INS=new Struct.Instance[0];
 	
-	private       List<Struct.Instance> data;
-	private       boolean               done;
-	private final BlendFile             blend;
+	private List<Struct.Instance> data;
+	private boolean               done;
 	
-	public StructLinkedList(Struct.Instance first, BlendFile blend){
-		this.blend=blend;
+	public StructLinkedList(Struct.Instance first){
 		
 		if(first==null){
 			data=List.of();
@@ -73,21 +71,24 @@ class StructLinkedList implements List<Struct.Instance>{
 		return data.contains(o);
 	}
 	
+	@NotNull
 	@Override
-	public @NotNull Iterator<Struct.Instance> iterator(){
+	public Iterator<Struct.Instance> iterator(){
 		readAll();
 		return data.iterator();
 	}
 	
+	@NotNull
 	@Override
-	public @NotNull Struct.Instance[] toArray(){
+	public Struct.Instance[] toArray(){
 		readAll();
 		return data.toArray(INS);
 	}
 	
 	@SuppressWarnings("SuspiciousToArrayCall")
+	@NotNull
 	@Override
-	public @NotNull <T> T[] toArray(@NotNull T[] a){
+	public <T> T[] toArray(@NotNull T[] a){
 		readAll();
 		return data.toArray(a);
 	}
@@ -122,20 +123,23 @@ class StructLinkedList implements List<Struct.Instance>{
 		return data.lastIndexOf(o);
 	}
 	
+	@NotNull
 	@Override
-	public @NotNull ListIterator<Struct.Instance> listIterator(){
+	public ListIterator<Struct.Instance> listIterator(){
 		readAll();
 		return data.listIterator();
 	}
 	
+	@NotNull
 	@Override
-	public @NotNull ListIterator<Struct.Instance> listIterator(int index){
+	public ListIterator<Struct.Instance> listIterator(int index){
 		readAll();
 		return data.listIterator(index);
 	}
 	
+	@NotNull
 	@Override
-	public @NotNull List<Struct.Instance> subList(int fromIndex, int toIndex){
+	public List<Struct.Instance> subList(int fromIndex, int toIndex){
 		readTo(toIndex);
 		return data.subList(fromIndex, toIndex);
 	}

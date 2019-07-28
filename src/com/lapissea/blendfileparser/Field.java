@@ -9,15 +9,13 @@ import java.util.List;
 
 public class Field{
 	
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	
 	@NotNull
 	public final DnaType type;
 	
 	@NotNull
 	public final String name;
 	
-	public Field(@NotNull String type, @NotNull String name){
+	Field(@NotNull String type, @NotNull String name){
 		
 		int nameStart=0;
 		int nameEnd  =name.length();
@@ -57,7 +55,7 @@ public class Field{
 	}
 	
 	
-	public Object read(BlendInputStream data, BlendFile blend) throws IOException{
+	Object read(BlendInputStream data, BlendFile blend) throws IOException{
 		return DataParser.parse(type, data, blend);
 	}
 	

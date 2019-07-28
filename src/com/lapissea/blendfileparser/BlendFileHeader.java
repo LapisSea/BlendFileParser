@@ -5,7 +5,7 @@ import com.lapissea.blendfileparser.exceptions.BlendFileIOException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteOrder;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import static java.nio.ByteOrder.*;
@@ -22,7 +22,7 @@ public class BlendFileHeader{
 	BlendFileHeader(InputStream in, boolean compressed) throws IOException{
 		this.compressed=compressed;
 		
-		if(!Arrays.equals(in.readNBytes(7), "BLENDER".getBytes(Charset.forName("ASCII")))){
+		if(!Arrays.equals(in.readNBytes(7), "BLENDER".getBytes(StandardCharsets.US_ASCII))){
 			throw new BlendFileIOException("Not a blend file");
 		}
 		

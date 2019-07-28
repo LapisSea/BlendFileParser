@@ -8,10 +8,6 @@ import com.lapissea.util.UtilL;
 import com.lapissea.util.function.TriFunction;
 import com.lapissea.util.function.UnsafeConsumer;
 import com.lapissea.util.function.UnsafeFunction;
-import gnu.trove.list.array.TByteArrayList;
-import gnu.trove.map.TLongObjectMap;
-import gnu.trove.map.hash.TLongObjectHashMap;
-import org.jetbrains.annotations.Contract;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -30,7 +26,6 @@ import static com.lapissea.blendfileparser.BlockCode.*;
 public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	
 	@NotNull
-	@Contract("_ -> new")
 	public static BlendFile read(IDataSignature blendFile) throws IOException{
 		return new BlendFile(blendFile);
 	}
@@ -38,13 +33,13 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	private       Map<Thread, BlendInputStream> inCache=new HashMap<>();
 	private final IDataSignature                source;
 	
-	final         BlendFileHeader                 header;
-	final         Dna1                            dna;
-	private final TLongObjectMap<FileBlockHeader> blockMap;
-	private final FileBlockHeader[]               blocks;
-	private       Struct                          strayPointerType;
+	final         BlendFileHeader            header;
+	final         Dna1                       dna;
+	private final Map<Long, FileBlockHeader> blockMap;
+	private final FileBlockHeader[]          blocks;
+	private       Struct                     strayPointerType;
 	
-	private final Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, TypeOptimizations.InstanceComposit>> typeOptimizations;
+	private final Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, TypeOptimizations.InstanceComposite>> typeOptimizations;
 	
 	private final Map<Struct.Instance, Object>                   translationCache=new HashMap<>();
 	private final Map<String, Function<Struct.Instance, Object>> translators     =new HashMap<>();
@@ -222,7 +217,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		
 		blocks=blockBuilder.toArray(FileBlockHeader[]::new);
 		
-		blockMap=new TLongObjectHashMap<>(blocks.length);
+		blockMap=new HashMap<>(blocks.length);
 		for(FileBlockHeader b : blocks){
 			blockMap.put(b.oldPtr, b);
 		}
@@ -346,13 +341,31 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		return s1;
 	}
 	
-	private static class Cache extends TByteArrayList{
-		public Cache(){
-			super(1<<12);
+	private static class Cache{
+		byte[] data=new byte[1<<12];
+		int    size=0;
+		
+		int size(){
+			return size;
+		}
+		
+		void ensureCapacity(int newCap){
+			if(data.length >= newCap) return;
+			
+			byte[] old=data;
+			
+			data=new byte[old.length<<1];
+			System.arraycopy(old, 0, data, 0, size);
 		}
 		
 		byte[] getData(){
-			return _data;
+			return data;
+		}
+		
+		public void add(byte[] src, int start, int read){
+			ensureCapacity(size+read);
+			System.arraycopy(src, 0, data, size, read);
+			size+=read;
 		}
 	}
 	
@@ -411,7 +424,9 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 				@Override
 				public int read() throws IOException{
 					ensure(1);
-					return blendFileCache.get(pos++);
+					var b=blendFileCache.getData()[pos];
+					pos++;
+					return b;
 				}
 			};
 		}else in=openSource();
