@@ -1,13 +1,12 @@
 package com.lapissea.blendfileparser;
 
 import com.lapissea.blendfileparser.exceptions.BlendFileIOException;
-import gnu.trove.list.array.TByteArrayList;
-import org.jetbrains.annotations.NotNull;
+import com.lapissea.util.NotNull;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 
 public class BlendInputStream extends InputStream{
 	
@@ -92,16 +91,20 @@ public class BlendInputStream extends InputStream{
 	}
 	
 	public String[] readNullTerminatedUTF8Array(int arraySize) throws IOException{
-		String[] array=new String[arraySize];
-		
-		var l=new TByteArrayList(64);
+		String[]   array=new String[arraySize];
+		ByteBuffer bb   =ByteBuffer.allocate(64);
 		for(int i=0;i<array.length;i++){
 			int code;
 			while((code=read())!=0){
-				l.add((byte)code);
+				if(!bb.hasRemaining()){
+					var old=bb;
+					bb=ByteBuffer.allocate(bb.capacity()<<1);
+					bb.put(old.flip());
+				}
+				bb.put((byte)code);
 			}
-			array[i]=new String(l.toArray(), Charset.forName("UTF-8"));
-			l.clear();
+			array[i]=new String(bb.array(), 0, bb.position(), StandardCharsets.UTF_8);
+			bb.clear();
 		}
 		return array;
 	}

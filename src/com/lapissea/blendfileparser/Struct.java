@@ -2,13 +2,7 @@ package com.lapissea.blendfileparser;
 
 import com.lapissea.blendfileparser.exceptions.BlendFileMissingValue;
 import com.lapissea.blendfileparser.flags.FlagEnum;
-import com.lapissea.util.ArrayViewList;
-import com.lapissea.util.LogUtil;
-import com.lapissea.util.TextUtil;
-import com.lapissea.util.UtilL;
-import gnu.trove.impl.Constants;
-import gnu.trove.map.hash.TObjectIntHashMap;
-import org.jetbrains.annotations.NotNull;
+import com.lapissea.util.*;
 
 import java.io.IOException;
 import java.lang.reflect.Array;
@@ -287,8 +281,8 @@ public class Struct{
 		}
 		
 		private Object getExc(Object key) throws BlendFileMissingValue{
-			var id=fieldIndex.get(key);
-			if(id==-1) throw new BlendFileMissingValue("\""+key+"\" field missing in \""+type+"\"{"+fields.stream().map(field->field.name).collect(Collectors.joining(", "))+"}");
+			Integer id=fieldIndex.get(key);
+			if(id==null) throw new BlendFileMissingValue("\""+key+"\" field missing in \""+type+"\"{"+fields.stream().map(field->field.name).collect(Collectors.joining(", "))+"}");
 			
 			var v=values().get(id);
 			if(v instanceof Struct.Instance&&((Struct.Instance)v).struct().type.name.equals("StrayPointer")){
@@ -539,11 +533,11 @@ public class Struct{
 	public final DnaType     type;
 	public final List<Field> fields;
 	
-	private final TObjectIntHashMap<String> fieldIndex;
-	private final int                       hash;
+	private final Map<String, Integer> fieldIndex;
+	private final int                  hash;
 	
-	private static TObjectIntHashMap<String> makeIndex(List<Field> fields){
-		var fieldIndex=new TObjectIntHashMap<String>(fields.size(), Constants.DEFAULT_LOAD_FACTOR, -1);
+	private static Map<String, Integer> makeIndex(List<Field> fields){
+		var fieldIndex=new HashMap<String, Integer>(fields.size());
 		
 		for(int i=0;i<fields.size();i++){
 			Field f=fields.get(i);

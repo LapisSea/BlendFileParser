@@ -275,7 +275,7 @@ class DataParser{
 				try{
 					var arr=blend.readBlock(first);
 					if(arr instanceof List) throw new RuntimeException();
-					return new StructLinkedList((Struct.Instance)arr, blend);
+					return new StructLinkedList((Struct.Instance)arr);
 				}catch(BlendFileMissingBlock e){
 					return blend.strayPointer(first);
 				}
