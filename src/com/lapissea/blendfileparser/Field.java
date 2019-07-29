@@ -50,8 +50,8 @@ public class Field{
 			arraySize=Collections.unmodifiableList(arraySize);
 		}else arraySize=null;
 		
-		this.type=new DnaType(type, pointerLevel, arraySize);
 		this.name=name.substring(nameStart, nameEnd);
+		this.type=new DnaType(type, pointerLevel, name.startsWith("(")&&name.endsWith(")"), arraySize);
 	}
 	
 	

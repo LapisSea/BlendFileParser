@@ -10,12 +10,12 @@ public class FileBlockHeader{
 	
 	WeakReference<Object> bodyCache;
 	
-	final BlockCode code;
-	final int       bodySize;
-	final long      oldPtr;
-	final int       sdnaIndex;
-	final int       count;
-	final long      bodyFilePos;
+	public final BlockCode code;
+	public final int       bodySize;
+	public final long      oldPtr;
+	public final int       sdnaIndex;
+	public final int       count;
+	public final long      bodyFilePos;
 	
 	public FileBlockHeader(BlendInputStream in, Consumer<Dna1> dnaSetter) throws IOException{
 		

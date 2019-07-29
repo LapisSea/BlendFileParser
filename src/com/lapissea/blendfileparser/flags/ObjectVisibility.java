@@ -1,6 +1,5 @@
 package com.lapissea.blendfileparser.flags;
 
-import com.lapissea.blendfileparser.Struct;
 import com.lapissea.util.UtilL;
 
 @SuppressWarnings("PointlessBitwiseExpression")
@@ -26,10 +25,6 @@ public enum ObjectVisibility implements FlagEnum{
 	
 	ObjectVisibility(int handle){
 		this.handle=handle;
-	}
-	
-	public boolean isEnabled(Struct.Instance object){
-		return isEnabled(object.getShort("base_flag"));
 	}
 	
 	public boolean isEnabled(int flags){

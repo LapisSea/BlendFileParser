@@ -1,15 +1,19 @@
 package com.lapissea.blendfileparser;
 
 import com.lapissea.blendfileparser.exceptions.BlendFileMissingBlock;
+import com.lapissea.util.ArrayViewList;
 import com.lapissea.util.LogUtil;
-import com.lapissea.util.NotImplementedException;
 import com.lapissea.util.TextUtil;
+import com.lapissea.util.UtilL;
 
 import java.io.IOException;
 import java.util.*;
 import java.util.function.Predicate;
 
 class DataParser{
+	
+	private static final boolean VALIDATE=true;
+	private static final boolean PRINT   =false;
 	
 	
 	private interface TypeParser{
@@ -65,28 +69,69 @@ class DataParser{
 				var ptr=data.readPtr();
 				if(ptr==0) return null;
 				else try{
-					return switch(type.pointerLevel){
-						case 1 -> blend.readBlock(ptr);
-						case 2 -> {
-							var block=blend.getBlock(ptr);
+					
+					if(type.pointerLevel>1){
+						var block=blend.getBlock(ptr);
+						
+						int count=block.bodySize/blend.header.ptrSize*block.count;
+						var raw  =type.depointify();
+						
+						Object[] arr=new Object[count];
+						blend.reopen(block.bodyFilePos, in->{
+							for(int i=0;i<count;i++){
+								arr[i]=DataParser.parse(raw, in, blend);
+							}
+						});
+						return ArrayViewList.create(arr).obj2;
+					}
+					
+					var block =blend.getBlock(ptr);
+					var struct=blend.dna.getStruct(block.sdnaIndex);
+					
+					if(!type.is(struct.type.name)){
+						
+						if(!type.is("void")){
+							var raw      =type.depointify();
+							var knownSize=raw.size(blend);
 							
-							int count=block.bodySize/blend.header.ptrSize*block.count;
-							var list =new ArrayList<>(count);
+							if(block.bodySize%knownSize!=0){
+								LogUtil.println(type, struct.type.name);
+								LogUtil.println(block, knownSize, block.bodySize%knownSize);
+								LogUtil.println(raw);
+//								type=type.castTo(struct.type.name);
+								
+								return blend.readBlock(block);
+//								throw new RuntimeException();//wtf??
+							}
+							
+							Object[] arr=new Object[block.bodySize/knownSize];
 							blend.reopen(block.bodyFilePos, in->{
-								for(int i=0;i<count;i++){
-									var p=in.readPtr();
-									if(p==0) list.add(null);
-									else list.add(blend.readBlock(p));
+								for(int i=0;i<arr.length;i++){
+									arr[i]=DataParser.parse(raw, in, blend);
 								}
 							});
-							break Collections.unmodifiableList(list);
+							
+							return ArrayViewList.create(arr).obj2;
 						}
-						default -> throw new NotImplementedException();
-					};
+						
+						if(block.sdnaIndex==0){
+							return new Struct.UnknownData(blend, block);
+						}
+					}
+					
+					return blend.readBlock(block);
+					
 				}catch(BlendFileMissingBlock e){
 					return blend.strayPointer(ptr);
 				}
 			}),
+			new TypeParserL(t->t.isFunc, (t, d, b)->{
+				var ptr=d.readPtr();
+				if(ptr==0) return null;
+				throw new RuntimeException(ptr+"");
+//				return b.readBlock(ptr);
+			}),
+			new TypeParserL(type("void"), (t, d, b)->d.readPtr()),
 			new TypeParser(){
 				@Override
 				public boolean canParse(DnaType type){ return typeArray(type, "short"); }
@@ -172,43 +217,29 @@ class DataParser{
 				@Override
 				public boolean canParse(DnaType type){ return typeArray(type, "char"); }
 				
-				String nullTerminatedCharArray(byte[] dat, BlendInputStream data) throws IOException{
-					
-					data.readNBytes(dat, 0, dat.length);
-					
-					StringBuilder sb=new StringBuilder(dat.length >> 1);
-					
-					for(byte c : dat){
-						if(c==0) break;
-						sb.append((char)c);
-					}
-					
-					return sb.toString();
-				}
-				
 				@Override
 				public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
 					Objects.requireNonNull(type.arraySize);
 					return switch(type.arraySize.size()){
 						case 1 -> {
-							
 							byte[] dat=new byte[type.arraySize.get(0)];
-							break nullTerminatedCharArray(dat, data);
+							data.readNBytes(dat, 0, dat.length);
+							break dat;
 						}
 						case 2 -> {
 							byte[]   dat  =new byte[type.arraySize.get(1)];
-							String[] array=new String[type.arraySize.get(0)];
-							for(int i=0;i<array.length;i++){
-								array[i]=nullTerminatedCharArray(dat, data);
+							byte[][] array=new byte[type.arraySize.get(0)][dat.length];
+							for(byte[] bytes : array){
+								data.readNBytes(bytes, 0, bytes.length);
 							}
 							break array;
 						}
 						case 3 -> {
 							byte[]     dat  =new byte[type.arraySize.get(2)];
-							String[][] array=new String[type.arraySize.get(0)][type.arraySize.get(1)];
-							for(String[] ar2 : array){
-								for(int i=0;i<ar2.length;i++){
-									ar2[i]=nullTerminatedCharArray(dat, data);
+							byte[][][] array=new byte[type.arraySize.get(0)][type.arraySize.get(1)][dat.length];
+							for(byte[][] ar2 : array){
+								for(byte[] bytes : ar2){
+									data.readNBytes(bytes, 0, bytes.length);
 								}
 							}
 							break array;
@@ -287,19 +318,29 @@ class DataParser{
 				@SuppressWarnings("ConstantConditions")
 				@Override
 				public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
-					Object[] array=new Struct.Instance[type.arraySize.get(0)];
+					Object[] array=new Object[type.arraySize.get(0)];
+					
 					for(int i=0;i<array.length;i++){
 						array[i]=DataParser.parse(type.dearrify(), data, blend);
 					}
-					return array;
+					
+					Class<?> allType=Arrays.stream(array).filter(Objects::nonNull).map(o->(Class)o.getClass()).reduce(UtilL::findClosestCommonSuper).orElse(Object.class);
+					if(allType==Object.class) return array;
+					
+					var typed=UtilL.array(allType, array.length);
+					System.arraycopy(array, 0, typed, 0, array.length);
+					return typed;
 				}
 			});
 	
-	private static final boolean VALIDATE=true;
-	private static final boolean PRINT   =false;
-	
 	static Struct.Instance parseStruct(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
-		var struct=blend.dna.getStruct(type);
+		Struct struct   =blend.dna.getStruct(type);
+		long   dataStart=data.position();
+		var    values   =parseStructValues(struct, data, blend);
+		return struct.new Instance(values, blend, dataStart, struct.length);
+	}
+	
+	static List<Object> parseStructValues(Struct struct, BlendInputStream data, BlendFile blend) throws IOException{
 		
 		var values=new ArrayList<>(struct.fields.size());
 		
@@ -309,19 +350,14 @@ class DataParser{
 		if(VALIDATE){
 			startPos=data.position();
 			if(PRINT){
-				tab=TextUtil.stringFill(Thread.currentThread().getStackTrace().length-19, ' ');
-				LogUtil.println(tab, "======", type, "======");
+				tab=TextUtil.stringFill(Thread.currentThread().getStackTrace().length, ' ');
+				LogUtil.println(tab, "======", struct.type, "======");
 			}
 		}
 		
 		for(Field field : struct.fields){
 			if(VALIDATE) p=data.position();
 
-//			Object v;
-//			if(field.type.name.endsWith("_Runtime")){
-//				data.skipNBytes(field.type.size(blend));
-//				v=null;
-//			}else v=field.read(data, blend);
 			Object v=field.read(data, blend);
 			
 			if(!VALIDATE&&!(v instanceof Number)&&field.name.startsWith("_pad")) v=null;
@@ -343,8 +379,8 @@ class DataParser{
 						if(((Number)v).intValue()!=0) fail=field.name+" has to be 0";
 						
 					}else{
-						if(v instanceof String){
-							for(var n : ((String)v).toCharArray()){
+						if(v instanceof byte[]){
+							for(var n : (byte[])v){
 								if(n!=0){
 									fail=field.name+" has to be all 0";
 									break;
@@ -357,7 +393,7 @@ class DataParser{
 									break;
 								}
 							}
-						}else throw new RuntimeException();
+						}else throw new RuntimeException(v.getClass().getName());
 						v=null;
 					}
 				}
@@ -394,7 +430,7 @@ class DataParser{
 		
 		if(VALIDATE&&PRINT) LogUtil.println();
 		
-		return struct.new Instance(values, blend);
+		return Collections.unmodifiableList(values);
 	}
 	
 	static Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{

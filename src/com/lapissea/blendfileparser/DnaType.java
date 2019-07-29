@@ -12,15 +12,17 @@ import java.util.stream.Collectors;
 
 public class DnaType{
 	@NotNull
-	public final String name;
-	public final int    pointerLevel;
+	public final String  name;
+	public final int     pointerLevel;
+	public final boolean isFunc;
 	
 	@Nullable
 	public final List<Integer> arraySize;
 	
-	public DnaType(@NotNull String name, int pointerLevel, @Nullable List<Integer> arraySize){
+	public DnaType(@NotNull String name, int pointerLevel, boolean isFunc, @Nullable List<Integer> arraySize){
 		this.name=name;
 		this.pointerLevel=pointerLevel;
+		this.isFunc=isFunc;
 		this.arraySize=arraySize;
 	}
 	
@@ -56,7 +58,7 @@ public class DnaType{
 	
 	public DnaType depointify(){
 		if(!isPointer()) return this;
-		return new DnaType(name, pointerLevel-1, arraySize);
+		return new DnaType(name, pointerLevel-1, isFunc, arraySize);
 	}
 	
 	@SuppressWarnings("ConstantConditions")
@@ -67,18 +69,23 @@ public class DnaType{
 		newSiz.remove(0);
 		newSiz.trimToSize();
 		
-		return new DnaType(name, pointerLevel, newSiz.isEmpty()?null:Collections.unmodifiableList(newSiz));
+		return new DnaType(name, pointerLevel, isFunc, newSiz.isEmpty()?null:Collections.unmodifiableList(newSiz));
 	}
 	
 	public boolean isPointer(){
 		return pointerLevel>0;
 	}
 	
+	public boolean is(String type){
+		return name.equals(type);
+	}
+	
 	public int size(BlendFile blend){
 		if(isPointer()) return blend.header.ptrSize;
 		
 		int s;
-		s=switch(name){
+		if(isFunc) s=blend.header.ptrSize;
+		else s=switch(name){
 			case "void" -> blend.header.ptrSize;
 			case "char", "uchar" -> 1;
 			case "short", "ushort" -> 2;
@@ -94,5 +101,9 @@ public class DnaType{
 		}
 		
 		return s;
+	}
+	
+	public DnaType castTo(String newTypeName){
+		return new DnaType(newTypeName, pointerLevel, isFunc, arraySize);
 	}
 }

@@ -1,48 +1,39 @@
 package com.lapissea.blendfileparser;
 
-import com.lapissea.util.ArrayViewList;
 import com.lapissea.util.NotNull;
 import com.lapissea.util.TextUtil;
 import com.lapissea.util.UtilL;
 
+import java.util.AbstractList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-public class ID<T>{
-	@NotNull
-	public final  List<T> data;
-	private final T[]     src;
-	private final int     hash;
+public class ID<T> extends AbstractList<T>{
+	
+	private T[] src;
+	private int hash;
+	
 	
 	@SafeVarargs
 	public ID(T... data){
-		this(computeType(data), data);
-	}
-	
-	@SuppressWarnings("unchecked")
-	private static <T> Class<T> computeType(T[] data){
-		if(data.length==0) return null;
-		Class c=data[0].getClass();
-		for(int i=1;i<data.length;i++){
-			c=UtilL.findClosestCommonSuper(c, data[i].getClass());
-		}
-		return c;
-	}
-	
-	@SafeVarargs
-	public ID(Class<T> type, T... data){
 		if(data.length==0) throw new NullPointerException();
-		
-		for(Object o : data){
+		setSrc(data);
+	}
+	
+	protected ID(){ }
+	
+	protected void setSrc(@NotNull T[] src){
+		for(Object o : src){
 			Objects.requireNonNull(o);
-			if(!UtilL.instanceOf(o, type)) throw new ClassCastException(o.toString()+" is not instanceof "+type);
 		}
-		
-		this.data=ArrayViewList.create(data).obj2;
-		src=data;
+		this.src=src;
 		hash=Arrays.hashCode(src);
+	}
+	
+	@Override
+	public T get(int index){
+		return src[index];
 	}
 	
 	@Override
@@ -82,21 +73,27 @@ public class ID<T>{
 	}
 	
 	@SuppressWarnings("unchecked")
-	public ID<T> makeSubId(T t){
-		var tc  =(Class<T>)src.getClass().getComponentType();
-		T[] tArr=UtilL.array(tc, src.length+1);
+	public ID<?> makeSubId(Object t){
+		Class    tc  =UtilL.findClosestCommonSuper(src.getClass().getComponentType(), t.getClass());
+		Object[] tArr=UtilL.array(tc, src.length+1);
 		System.arraycopy(src, 0, tArr, 0, src.length);
 		tArr[src.length]=t;
-		return new ID<>(tc, tArr);
+		return new ID(tc, tArr);
 	}
 	
 	@Override
 	public int hashCode(){
+		Objects.requireNonNull(src);
 		return hash;
 	}
 	
 	@Override
+	public int size(){
+		return src.length;
+	}
+	
+	@Override
 	public String toString(){
-		return "ID"+data.stream().map(TextUtil::toString).collect(Collectors.joining("->"));
+		return "ID"+stream().map(TextUtil::toString).collect(Collectors.joining("->"));
 	}
 }

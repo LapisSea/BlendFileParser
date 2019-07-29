@@ -19,6 +19,11 @@ public class BlendInputStream extends InputStream{
 	
 	private long position;
 	
+	public BlendInputStream(InputStream in, BlendFileHeader header, long start){
+		this(in, header);
+		position=start;
+	}
+	
 	public BlendInputStream(InputStream in, BlendFileHeader header){
 		this.in=in;
 		this.header=header;

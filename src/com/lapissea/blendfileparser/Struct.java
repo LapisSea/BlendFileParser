@@ -11,6 +11,8 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static java.nio.charset.StandardCharsets.*;
+
 @SuppressWarnings("ALL")
 public class Struct{
 	
@@ -25,6 +27,40 @@ public class Struct{
 			           .map(e->e.getKey()+": "+TextUtil.IN_TABLE_TO_STRINGS.toString(e.getValue()))
 			           .collect(Collectors.joining(", "));
 		});
+	}
+	
+	static class UnknownData{
+		private final BlendFile       blend;
+		private final FileBlockHeader dataSource;
+		private       Object          data;
+		
+		UnknownData(BlendFile blend, FileBlockHeader dataSource){
+			this.blend=blend;
+			this.dataSource=dataSource;
+		}
+		
+		private synchronized Object read(Struct struct){
+			
+			if(dataSource.bodySize%struct.length!=0||dataSource.bodySize/dataSource.count!=struct.length)
+				throw new IllegalArgumentException("Struct "+struct.type.name+" with size of "+struct.length+" can not fit in to "+dataSource.bodySize+", "+dataSource.count+" "+TextUtil.plural("time", dataSource.count));
+			
+			if(data==null){
+				try{
+					data=blend.reopen(dataSource.bodyFilePos, in->{
+						if(dataSource.count==1) return DataParser.parse(struct.type, in, blend);
+						Object[] arr=new Object[dataSource.count];
+						for(int i=0;i<arr.length;i++){
+							arr[i]=DataParser.parse(struct.type, in, blend);
+						}
+						return ArrayViewList.create(arr).obj2;
+					});
+				}catch(IOException e){
+					throw UtilL.uncheckedThrow(e);
+				}
+			}
+			
+			return data;
+		}
 	}
 	
 	private static final boolean LOG_ALOC      =false;
@@ -44,10 +80,15 @@ public class Struct{
 		private int hash;
 		
 		public Instance(List<Object> values, BlendFile blend){
-			dataStart=-1;
-			dataSize=-1;
+			this(values, blend, -1, -1);
+		}
+		
+		public Instance(List<Object> values, BlendFile blend, long dataStart, int dataSize){
+			this.dataStart=dataStart;
+			this.dataSize=dataSize;
 			if(values.size()!=fields.size()) throw new RuntimeException();//bruh moment
-			this.values=Collections.unmodifiableList(values);
+			var v=Collections.unmodifiableList(values);
+			this.values=v.getClass()==values.getClass()?values:v;
 			this.blend=blend;
 		}
 		
@@ -69,35 +110,32 @@ public class Struct{
 			return length;
 		}
 		
-		public Instance allocate(){
+		public synchronized Instance allocate(){
 			if(isAllocated()) return this;
 			try{
-				if(struct().type.name.equals("Link")){
-					blend.reopen(dataStart, in->{
-						LogUtil.println(in.readNBytes(dataSize));
-					});
-				}
 				blend.reopen(dataStart, in->{
 					long pos=in.position();
 					
-					values=DataParser.parseStruct(type, in, blend).values;
+					values=DataParser.parseStructValues(struct(), in, blend);
 					
 					if(VALIDATE_READS){
+						
 						long read=in.position()-pos;
 						
 						if(in.position()>dataStart+dataSize){
 							LogUtil.printlnEr("Likely corruption of "+(name()==null?type:type+"("+name()+")")+"? outside block body", dataStart+dataSize+" / "+in.position());
-//							LogUtil.println(this);
-//							LogUtil.println(dataStart, dataSize);
-//							System.exit(0);
+							LogUtil.println(this);
+							LogUtil.println(dataStart, dataSize);
+							System.exit(0);
 						}
 						var length=validLength();
 						if(read!=length){
 							LogUtil.printlnEr("Likely corruption of "+(name()==null?type:type+"("+name()+")")+"? read:", read, "but type size is:", length);
-//							LogUtil.println(this);
-//							System.exit(0);
+							LogUtil.println(this);
+							System.exit(0);
 						}
 					}
+					
 				});
 				
 				if(LOG_ALOC){
@@ -140,10 +178,10 @@ public class Struct{
 				String fullName;
 				try{
 					var id=getInstance("id");
-					fullName=id.type("name");
+					fullName=id.getString("name");
 				}catch(BlendFileMissingValue|NullPointerException e){
 					try{
-						fullName=type("name");
+						fullName=getString("name");
 					}catch(BlendFileMissingValue e1){
 						fullName=null;
 					}
@@ -179,7 +217,7 @@ public class Struct{
 		@Override
 		public String toString(){
 			if(!isAllocated()) return type+"<0x"+Long.toHexString(dataStart)+">";
-			if(struct().type.name.equals("StrayPointer")) return "0x"+Long.toHexString(getLong("badPtr"));
+			if(struct().is("StrayPointer")) return "0x"+Long.toHexString(getLong("badPtr"))+" -> ?";
 			String result=type+"{\n";
 			synchronized(INSTANCE_STACK){
 				INSTANCE_STACK.push(this);
@@ -189,7 +227,12 @@ public class Struct{
 						if(v instanceof String){
 							v="\""+((String)v).replace("\n", "\\n")+'"';
 						}
+						
 						var f=fields.get(i);
+						
+						if(v instanceof byte[]){
+							v="\""+getString(f.name)+'"';
+						}
 						
 						
 						prettyfy:
@@ -210,13 +253,8 @@ public class Struct{
 									v=v.toString();
 									break prettyfy;
 								}
-								
-								switch(f.name){
-								case "next", "prev":{
-									v=""+((Instance)v).struct().type.name+"<hidden>";
-									break prettyfy;
-								}
-								}
+								var s=((Instance)v).struct();
+								if(INSTANCE_STACK.stream().anyMatch(i1->i1.struct().equals(s))) v=((Instance)v).struct().type.name+"<hidden>";
 							}
 						}
 						
@@ -249,22 +287,68 @@ public class Struct{
 			return values().contains(value);
 		}
 		
-		public <T> List<T> getInstanceListTranslated(Object key){
+		public <T extends BlendFile.Translator> List<T> getInstanceListTranslated(Object key){
 			return getInstanceList(key).stream().map(blend::<T>translate).collect(Collectors.toUnmodifiableList());
 		}
 		
 		public List<Instance> getInstanceList(Object key){
 			var o=get(key);
-			if(key instanceof Instance) return List.of((Instance)key);
+			if(o instanceof Instance) return List.of((Instance)o);
+			if(o instanceof Instance[]) return List.of((Instance[])o);
 			return (List<Instance>)o;
 		}
 		
-		public Instance getInstance(Object key){
-			return type(key);
+		public <T extends BlendFile.Translator> T getInstanceTranslated(Object key, String typeName){
+			return getInstance(key, typeName).translate();
 		}
 		
-		public <T> T getInstanceTranslated(Object key){
-			return blend.translate(getInstance(key));
+		public <T extends BlendFile.Translator> T getInstanceTranslated(Object key, Struct struct){
+			return getInstance(key, struct).translate();
+		}
+		
+		public Instance getInstance(Object key, String typeName){
+			return (Instance)get(key, typeName);
+		}
+		
+		public Instance getInstance(Object key, Struct struct){
+			return (Instance)get(key, struct);
+		}
+		
+		public Object get(Object key, String typeName){
+			return get(key, blend.dna.getStruct(typeName));
+		}
+		
+		public Object get(Object key, Struct struct){
+			Object o=get(key);
+			if(o==null) return null;
+			if(!(o instanceof UnknownData)) throw new RuntimeException("This data already has known type");
+			UnknownData ud=(UnknownData)o;
+			return ud.read(struct);
+		}
+		
+		public Instance getInstance(Object key){
+			Object o=get(key);
+			if(o instanceof UnknownData) throw new RuntimeException("This data has no known type");
+			return (Instance)o;
+		}
+		
+		public <T extends BlendFile.Translator> T getInstanceTranslated(Object key){
+			var inst=getInstance(key);
+			return inst==null?null:inst.translate();
+		}
+		
+		public <T extends BlendFile.Translator> T translate(){
+			return blend.translate(this);
+		}
+		
+		public String getString(String key){
+			byte[] dat=type(key);
+			
+			int i=0;
+			for(;i<dat.length;i++){
+				if(dat[i]==0) break;
+			}
+			return new String(dat, 0, i, UTF_8);
 		}
 		
 		public <T> T type(Object key){
@@ -303,6 +387,16 @@ public class Struct{
 			else return ((Number)k).intValue();
 		}
 		
+		public byte getByte(Object key){
+			var k=get(key);
+			if(k instanceof Byte) return (Byte)k;
+			else return ((Number)k).byteValue();
+		}
+		
+		public boolean getBoolean(Object key){
+			return getByte(key)==1;
+		}
+		
 		public int getShort(Object key){
 			var k=get(key);
 			if(k instanceof Short) return (Short)k;
@@ -336,12 +430,14 @@ public class Struct{
 		}
 		
 		@Override
-		public @NotNull Set<String> keySet(){
+		public @NotNull
+		Set<String> keySet(){
 			return fieldIndex.keySet();
 		}
 		
 		@Override
-		public @NotNull List<Object> values(){
+		public @NotNull
+		List<Object> values(){
 			allocate();
 			return values;
 		}
@@ -412,7 +508,8 @@ public class Struct{
 			}
 			
 			@Override
-			public @NotNull Object[] toArray(){
+			public @NotNull
+			Object[] toArray(){
 				return data.clone();
 			}
 			
@@ -467,7 +564,8 @@ public class Struct{
 		private S set;
 		
 		@Override
-		public @NotNull Set<Entry<String, Object>> entrySet(){
+		public @NotNull
+		Set<Entry<String, Object>> entrySet(){
 			if(set==null) set=new S();
 			
 			return set;
@@ -497,6 +595,9 @@ public class Struct{
 		}
 		
 		private int calcHashCode(){
+			
+			if(dataStart!=-1) return Long.hashCode(dataStart);
+			
 			String name=fullName();
 			if(name!=null) return name.hashCode();
 			
@@ -517,7 +618,11 @@ public class Struct{
 		}
 		
 		public <T extends Enum<T>&FlagEnum> EnumSet<T> getFlagProps(Class<T> enumType){
-			int        flag  =getInt("flag");
+			return getFlagProps("flag", enumType);
+		}
+		
+		public <T extends Enum<T>&FlagEnum> EnumSet<T> getFlagProps(String key, Class<T> enumType){
+			int        flag  =getInt(key);
 			EnumSet<T> result=EnumSet.allOf(enumType);
 			result.removeIf(e->!e.matchesFlag(flag));
 			return result;
@@ -555,7 +660,7 @@ public class Struct{
 		short   length;
 		{
 			var typeId=in.read2BInt();
-			type=new DnaType(types[typeId], 0, null);
+			type=new DnaType(types[typeId], 0, false, null);
 			length=lengths[typeId];
 		}
 		
@@ -576,6 +681,10 @@ public class Struct{
 		
 		fieldIndex=makeIndex(fields);
 		hash=Arrays.hashCode(new int[]{this.type.hashCode(), this.fields.hashCode()});
+	}
+	
+	public boolean is(String typeName){
+		return type.is(typeName);
 	}
 	
 	@Override

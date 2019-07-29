@@ -1,7 +1,6 @@
 package com.lapissea.blendfileparser;
 
 import com.lapissea.blendfileparser.exceptions.BlendFileMissingBlock;
-import com.lapissea.datamanager.IDataSignature;
 import com.lapissea.util.LogUtil;
 import com.lapissea.util.NotNull;
 import com.lapissea.util.UtilL;
@@ -17,6 +16,7 @@ import java.lang.reflect.ParameterizedType;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
@@ -26,23 +26,97 @@ import static com.lapissea.blendfileparser.BlockCode.*;
 public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	
 	@NotNull
-	public static BlendFile read(IDataSignature blendFile) throws IOException{
-		return new BlendFile(blendFile);
+	public static BlendFile read(Supplier<InputStream> fileSource, String path) throws IOException{
+		return new BlendFile(fileSource, path);
 	}
 	
-	private       Map<Thread, BlendInputStream> inCache=new HashMap<>();
-	private final IDataSignature                source;
+	private final Supplier<InputStream> source;
+	private final String                path;
+	public final  ID<?>                 id;
 	
 	final         BlendFileHeader            header;
-	final         Dna1                       dna;
+	public final  Dna1                       dna;
 	private final Map<Long, FileBlockHeader> blockMap;
 	private final FileBlockHeader[]          blocks;
 	private       Struct                     strayPointerType;
 	
 	private final Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, TypeOptimizations.InstanceComposite>> typeOptimizations;
 	
-	private final Map<Struct.Instance, Object>                   translationCache=new HashMap<>();
-	private final Map<String, Function<Struct.Instance, Object>> translators     =new HashMap<>();
+	private final Map<Struct.Instance, Translator>                             translationCache=new HashMap<>();
+	private final Map<String, Function<Struct.Instance, ? extends Translator>> translators     =new HashMap<>();
+	
+	public interface Translator{
+		void translate(Struct.Instance data);
+	}
+	
+	private BlendFile(Supplier<InputStream> fileSource, String path) throws IOException{
+		source=fileSource;
+		this.path=path;
+		id=new ID<>(this);
+		
+		try(var blendFile=openSource()){
+			
+			if(!blendFile.markSupported()) throw new RuntimeException();
+			
+			blendFile.mark(BlendFileHeader.BYTE_SIZE);
+			BlendFileHeader header;
+			try{
+				header=new BlendFileHeader(blendFile, false);
+			}catch(IOException e){
+				blendFile.reset();
+				GZIPInputStream zipped=new GZIPInputStream(blendFile);
+				header=new BlendFileHeader(zipped, true);
+			}
+			this.header=header;
+		}
+		
+		strayPointerType=new Struct(-1, (short)header.ptrSize, new DnaType("StrayPointer", 0, false, null), List.of(new Field("void", "badPtr")));
+		
+		
+		final Dna1[]   dna      ={null};
+		Consumer<Dna1> dnaSetter=d->dna[0]=d;
+		
+		var blockBuilder=new LinkedList<FileBlockHeader>();
+		
+		try(var in=reopen()){
+			in.skipNBytes(BlendFileHeader.BYTE_SIZE);
+			while(true){
+				var block=new FileBlockHeader(in, dnaSetter);
+				if(block.code==END) break;
+				blockBuilder.add(block);
+			}
+		}
+		
+		this.dna=Objects.requireNonNull(dna[0]);
+
+//		LogUtil.println(this.dna.getStruct("bNodeSocketValueFloat"));
+//		System.exit(0);
+		
+		typeOptimizations=TypeOptimizations.get(this.dna);
+		
+		blocks=blockBuilder.toArray(FileBlockHeader[]::new);
+		
+		blockMap=new HashMap<>(blocks.length);
+		for(FileBlockHeader b : blocks){
+			blockMap.put(b.oldPtr, b);
+		}
+	}
+	
+	private static <T extends Translator> Function<Struct.Instance, T> classToNew(Class<T> tClass){
+		try{
+			Constructor<T> constructor=tClass.getDeclaredConstructor();
+			constructor.setAccessible(true);
+			return d->{
+				try{
+					return constructor.newInstance();
+				}catch(ReflectiveOperationException e){
+					throw UtilL.uncheckedThrow(e);
+				}
+			};
+		}catch(NoSuchMethodException e){
+			throw UtilL.uncheckedThrow(e);
+		}
+	}
 	
 	@SuppressWarnings("unchecked")
 	public <T, E> void registerTranslatorSwitch(@NotNull String structName, Class<?> switchClass){
@@ -102,9 +176,9 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 			};
 			
 			if(isFunc){
-				registerTranslatorSwitchFunc(structName, (Map<Object, Function<Struct.Instance, Object>>)ways.get(null), identifierVal);
+				registerTranslatorSwitchFunc(structName, (Map<Object, Function<Struct.Instance, Translator>>)ways.get(null), identifierVal);
 			}else{
-				registerTranslatorSwitchClass(structName, (Map<Object, Class<Object>>)ways.get(null), identifierVal);
+				registerTranslatorSwitchClass(structName, (Map<Object, Class<Translator>>)ways.get(null), identifierVal);
 			}
 			
 		}catch(ReflectiveOperationException e){
@@ -112,26 +186,11 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		}
 	}
 	
-	private static <T> Function<Struct.Instance, Object> classToFunc(Class<T> tClass){
-		try{
-			Constructor<T> constructor=tClass.getConstructor(Struct.Instance.class);
-			return inst->{
-				try{
-					return constructor.newInstance(inst);
-				}catch(ReflectiveOperationException e){
-					throw UtilL.uncheckedThrow(e);
-				}
-			};
-		}catch(NoSuchMethodException e){
-			throw UtilL.uncheckedThrow(e);
-		}
+	public <T extends Translator, E> void registerTranslatorSwitchClass(@NotNull String structName, @NotNull Map<E, Class<T>> ways, Function<Struct.Instance, E> identifier){
+		registerTranslatorSwitchFunc(structName, ways.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e->classToNew(e.getValue()))), identifier);
 	}
 	
-	public <T, E> void registerTranslatorSwitchClass(@NotNull String structName, @NotNull Map<E, Class<T>> ways, Function<Struct.Instance, E> identifier){
-		registerTranslatorSwitchFunc(structName, ways.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e->classToFunc(e.getValue()))), identifier);
-	}
-	
-	public <T, E> void registerTranslatorSwitchFunc(@NotNull String structName, @NotNull Map<E, Function<Struct.Instance, Object>> ways, Function<Struct.Instance, E> identifier){
+	public <T extends Translator, E> void registerTranslatorSwitchFunc(@NotNull String structName, @NotNull Map<E, Function<Struct.Instance, T>> ways, Function<Struct.Instance, E> identifier){
 		registerTranslator(structName, data->{
 			var id =identifier.apply(data);
 			var way=ways.get(id);
@@ -140,89 +199,39 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		});
 	}
 	
-	public <T> void registerTranslator(@NotNull Class<T> directTranslation){
+	public <T extends Translator> void registerTranslator(@NotNull Class<T> directTranslation){
 		registerTranslator(directTranslation.getSimpleName(), directTranslation);
 	}
 	
-	public <T> void registerTranslator(@NotNull String structName, @NotNull Class<T> directTranslation){
-		Objects.requireNonNull(structName);
-		Objects.requireNonNull(directTranslation);
-		
-		registerTranslator(structName, classToFunc(directTranslation));
+	public <T extends Translator> void registerTranslator(@NotNull String structName, @NotNull Class<T> directTranslation){
+		registerTranslator(structName, classToNew(directTranslation));
 	}
 	
-	public void registerTranslator(@NotNull String structName, @NotNull Function<Struct.Instance, Object> translator){
+	public <T extends Translator> void registerTranslator(@NotNull String structName, @NotNull Supplier<T> translator){
+		registerTranslator(structName, data->translator.get());
+	}
+	
+	public <T extends Translator> void registerTranslator(@NotNull String structName, @NotNull Function<Struct.Instance, T> translator){
 		Objects.requireNonNull(structName);
 		Objects.requireNonNull(translator);
 		translators.put(structName, translator);
 	}
 	
-	@SuppressWarnings("unchecked")
-	public <T> T translate(Struct.Instance instance){
-		
-		T t=(T)translationCache.get(instance);
-		if(t==null){
-			translationCache.put(instance, t=(T)doTranslation(instance));
-		}
-		return t;
-	}
-	
-	private Object doTranslation(Struct.Instance instance){
-		var translator=translators.get(instance.struct().type.name);
-		if(translator==null) throw new RuntimeException("No translator for "+instance.struct().type.name);
-		var translated=translator.apply(instance);
-		if(translated==null) throw new RuntimeException("Translator for "+instance.struct().type.name+" did not return an object");
-		return translated;
-	}
-	
-	private BlendFile(IDataSignature source) throws IOException{
-		this.source=source;
-		
-		try(var blendFile=openSource()){
-			
-			if(!blendFile.markSupported()) throw new RuntimeException();
-			
-			blendFile.mark(BlendFileHeader.BYTE_SIZE);
-			BlendFileHeader header;
-			try{
-				header=new BlendFileHeader(blendFile, false);
-			}catch(IOException e){
-				blendFile.reset();
-				GZIPInputStream zipped=new GZIPInputStream(blendFile);
-				header=new BlendFileHeader(zipped, true);
+	@SuppressWarnings({"unchecked", "SynchronizationOnLocalVariableOrMethodParameter"})
+	public <T extends Translator> T translate(Struct.Instance instance){
+		synchronized(instance){//need to synchronize over each instance separately to enable reading unrelated objects at the same time to preserve a high level of parallelism
+			T t=(T)translationCache.get(instance);
+			if(t==null){
+				var translator=(Function<Struct.Instance, T>)translators.get(instance.struct().type.name);
+				if(translator==null) throw new RuntimeException("No translator for "+instance.struct().type.name);
+				
+				t=translator.apply(instance);
+				translationCache.put(instance, t);
+				t.translate(instance);
 			}
-			this.header=header;
-		}
-		
-		strayPointerType=new Struct(-1, (short)header.ptrSize, new DnaType("StrayPointer", 0, null), List.of(new Field("void", "badPtr")));
-		
-		
-		final Dna1[]   dna      ={null};
-		Consumer<Dna1> dnaSetter=d->dna[0]=d;
-		
-		var blockBuilder=new LinkedList<FileBlockHeader>();
-		
-		try(var in=reopen()){
-			in.skip(BlendFileHeader.BYTE_SIZE);
-			while(true){
-				var block=new FileBlockHeader(in, dnaSetter);
-				if(block.code==END) break;
-				blockBuilder.add(block);
-			}
-		}
-		
-		this.dna=Objects.requireNonNull(dna[0]);
-		
-		typeOptimizations=TypeOptimizations.get(this.dna);
-		
-		blocks=blockBuilder.toArray(FileBlockHeader[]::new);
-		
-		blockMap=new HashMap<>(blocks.length);
-		for(FileBlockHeader b : blocks){
-			blockMap.put(b.oldPtr, b);
+			return t;
 		}
 	}
-	
 	
 	public Stream<FileBlockHeader> blocksByCode(BlockCode code){
 		return Arrays.stream(blocks).filter(b->b.code==code);
@@ -240,7 +249,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		return readBlock(getBlock(pointer));
 	}
 	
-	private Object createBlock(FileBlockHeader blockHeader){
+	private Object parseBlock(FileBlockHeader blockHeader){
 		var struct=dna.getStruct(blockHeader.sdnaIndex);
 		
 		var optimization=typeOptimizations.get(struct.type.name);
@@ -269,7 +278,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	Object readBlock(FileBlockHeader blockHeader){
 		
 		if(blockHeader.bodyCache==null){
-			Object obj=createBlock(blockHeader);
+			Object obj=parseBlock(blockHeader);
 			blockHeader.bodyCache=new WeakReference<>(obj);
 			return obj;
 		}
@@ -282,62 +291,58 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		return readBlock(blockHeader);
 	}
 	
-	private BlendInputStream sourceAt(long pos) throws IOException{
-		var ct=Thread.currentThread();
+	BlendInputStream inCache;
+	
+	
+	private BlendInputStream getSourceAt(long pos) throws IOException{
 		
-		var cached=inCache.get(ct);
-		if(cached==null){
-			inCache.put(ct, cached=reopen());
+		if(inCache==null){
+			inCache=reopen();
 		}
 		
-		long toSkip=pos-cached.position();
+		long toSkip=pos-inCache.position();
 		
 		if(toSkip<0){
-			cached.close();
-			inCache.remove(ct);
-			return sourceAt(pos);
+			inCache.close();
+			inCache=null;
+			return getSourceAt(pos);
 		}
 		
 		if(toSkip>0){
-			cached.skipNBytes(toSkip);
+			inCache.skipNBytes(toSkip);
 		}
-		
-		return cached;
+		var c=inCache;
+		inCache=null;
+		return c;
 	}
 	
-	@SuppressWarnings("TryFinallyCanBeTryWithResources")
-	<T> T reopen(long pos, UnsafeFunction<BlendInputStream, T, IOException> session) throws IOException{
-		var s =sourceAt(pos);
-		var ct=Thread.currentThread();
-		inCache.remove(ct);
+	private void putSource(BlendInputStream c) throws IOException{
+		if(inCache!=null) inCache.close();
+		inCache=c;
+	}
+	
+	synchronized <T> T reopen(long pos, UnsafeFunction<BlendInputStream, T, IOException> session) throws IOException{
+		var s=getSourceAt(pos);
 		try{
 			return session.apply(s);
 		}finally{
-			var cached=inCache.get(ct);
-			if(cached!=null) cached.close();
-			inCache.put(ct, s);
+			putSource(s);
 		}
 	}
 	
-	@SuppressWarnings("TryFinallyCanBeTryWithResources")
-	void reopen(long pos, UnsafeConsumer<BlendInputStream, IOException> session) throws IOException{
-		var s =sourceAt(pos);
-		var ct=Thread.currentThread();
-		inCache.remove(ct);
+	synchronized void reopen(long pos, UnsafeConsumer<BlendInputStream, IOException> session) throws IOException{
+		var s=getSourceAt(pos);
+		inCache=null;
 		try{
 			session.accept(s);
 		}finally{
-			var cached=inCache.get(ct);
-			if(cached!=null){
-				cached.close();
-			}
-			inCache.put(ct, s);
+			putSource(s);
 		}
 	}
 	
 	private InputStream openSource(){
-		var s1=source.getInStream();
-		if(s1==null) throw new RuntimeException("missing "+source.getPath());
+		var s1=source.get();
+		if(s1==null) throw new RuntimeException("missing "+path);
 		return s1;
 	}
 	
@@ -451,9 +456,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		}
 		
 		blendFileCache=null;
-		for(BlendInputStream value : inCache.values()){
-			value.close();
-		}
+		inCache.close();
 		inCache=null;
 	}
 	
@@ -469,12 +472,12 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	
 	@Override
 	public int compareTo(@NotNull BlendFile o){
-		return o==this?0:source.compareTo(o.source);
+		return o==this?0:path.compareTo(o.path);
 	}
 	
 	@Override
 	public String toString(){
-		return source.getPath();
+		return path;
 	}
 	
 	@SuppressWarnings("deprecation")
@@ -482,4 +485,35 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	protected void finalize() throws IOException{
 		close();
 	}
+
+//	public void ay(){
+//
+//		try{
+//			var tableField=HashMap.class.getDeclaredField("table");
+//			tableField.setAccessible(true);
+//
+//			var table =(Object[])tableField.get(translationCache);
+//			var counts=new Integer[table.length];
+//
+//			var entryClass=table.getClass().getComponentType();
+//			var nextField =entryClass.getDeclaredField("next");
+//			nextField.setAccessible(true);
+//
+//			for(int i=0;i<table.length;i++){
+//				var e    =table[i];
+//				int count=0;
+//				if(e!=null){
+//					do{
+//						count++;
+//					}while((e=nextField.get(e))!=null);
+//				}
+//				counts[i]=count;
+//			}
+//
+//			LogUtil.println(translationCache.size(), counts.length);
+//			LogUtil.printGraph(counts, 20, false, new LogUtil.Val<>("ay", '+', i->i+1));
+//		}catch(ReflectiveOperationException e){
+//			e.printStackTrace();
+//		}
+//	}
 }
