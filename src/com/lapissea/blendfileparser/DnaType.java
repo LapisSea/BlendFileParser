@@ -80,6 +80,10 @@ public class DnaType{
 		return name.equals(type);
 	}
 	
+	public Struct getStruct(BlendFile blend){
+		return blend.dna.getStruct(this);
+	}
+	
 	public int size(BlendFile blend){
 		if(isPointer()) return blend.header.ptrSize;
 		
@@ -91,7 +95,7 @@ public class DnaType{
 			case "short", "ushort" -> 2;
 			case "int", "float" -> 4;
 			case "uint64_t", "int64_t", "long", "double" -> 8;
-			default -> blend.dna.getStruct(this).length;
+			default -> getStruct(blend).length;
 		};
 		
 		if(arraySize!=null){

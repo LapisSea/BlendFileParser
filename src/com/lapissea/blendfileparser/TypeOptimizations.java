@@ -1,5 +1,6 @@
 package com.lapissea.blendfileparser;
 
+import com.lapissea.util.LogUtil;
 import com.lapissea.util.NotNull;
 import com.lapissea.util.UtilL;
 import com.lapissea.util.function.TriFunction;
@@ -379,6 +380,63 @@ public class TypeOptimizations{
 		}
 	}
 	
+	public static class MDeformVert extends InstanceComposite<MDeformVert> implements Iterable<MDeformVert.View>{
+		float[] weights;
+		
+		public MDeformVert(Struct struct, FileBlockHeader blockHeader, BlendFile blend){
+			super(struct, blockHeader, blend);
+		}
+		
+		@Override
+		protected void readValues(int count, BlendInputStream in) throws IOException{
+			LogUtil.println(count);
+			weights=new float[count];
+			for(int i=0;i<count;i++){
+				var w        =DataParser.parse(new DnaType("MDeformWeight", 1, false, null), in, blend);
+				int totweight=in.read4BInt();
+				int flag     =in.read4BInt();
+				if(w instanceof Struct.Instance) LogUtil.println(((Struct.Instance)w).allocate());
+				w.toString();
+				LogUtil.println(w.toString(), totweight, flag);
+//				System.exit(0);
+			}
+		}
+		
+		public float[] getWeights(){
+			return weights;
+		}
+		
+		public float getWeight(int i){
+			return weights[i];
+		}
+		
+		public class View implements Iterator<MDeformVert.View>{
+			private int pos=-1;
+			
+			@Override
+			public boolean hasNext(){
+				return pos+1<count;
+			}
+			
+			@Override
+			public MDeformVert.View next(){
+				pos++;
+				return this;
+			}
+			
+			public float getWeight(){
+				return MDeformVert.this.getWeight(pos);
+			}
+			
+		}
+		
+		@NotNull
+		@Override
+		public Iterator<MDeformVert.View> iterator(){
+			return new MDeformVert.View();
+		}
+	}
+	
 	private static void register(Dna1 dna,
 	                             Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposite>> map, String name,
 	                             TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposite> func,
@@ -401,6 +459,7 @@ public class TypeOptimizations{
 		register(dna, result, "MLoopUV", MLoopUV::new, "uv", "flag");
 		register(dna, result, "MEdge", MEdge::new, "v1", "v2", "crease", "bweight", "flag");
 		register(dna, result, "MPoly", MPoly::new, "loopstart", "totloop", "mat_nr", "flag", "_pad");
+		register(dna, result, "MDeformVert", MDeformVert::new, "dw", "totweight", "flag");
 		
 		return result;
 	}

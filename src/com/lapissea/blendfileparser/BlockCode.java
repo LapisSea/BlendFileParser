@@ -29,7 +29,9 @@ public enum BlockCode{
 	SHAPE_KEY("KE\0\0"),
 	PARTICLE_SETTINGS("PA\0\0"),
 	WORLD("WO\0\0"),
-	ACTION("AC\0\0");
+	ACTION("AC\0\0"),
+	LINK("LI\0\0"),
+	ID("ID\0\0");
 	
 	public final String id;
 	

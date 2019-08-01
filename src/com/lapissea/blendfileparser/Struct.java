@@ -63,6 +63,8 @@ public class Struct{
 		}
 	}
 	
+	public static final Struct.Instance[] INS={};
+	
 	private static final boolean LOG_ALOC      =false;
 	private static final boolean VALIDATE_READS=true;
 	
@@ -72,34 +74,35 @@ public class Struct{
 	
 	public class Instance implements Map<String, Object>{
 		
-		private final long         dataStart;
-		private final int          dataSize;
-		private       List<Object> values;
-		public final  BlendFile    blend;
+		private final long      dataStart;
+		public final  BlendFile blend;
+		
+		private List<Object> values;
+		
+		public final StackTraceElement[] constr;
 		
 		private int hash;
 		
 		public Instance(List<Object> values, BlendFile blend){
-			this(values, blend, -1, -1);
+			this(values, blend, -1);
 		}
 		
-		public Instance(List<Object> values, BlendFile blend, long dataStart, int dataSize){
+		public Instance(List<Object> values, BlendFile blend, long dataStart){
 			this.dataStart=dataStart;
-			this.dataSize=dataSize;
-			if(values.size()!=fields.size()) throw new RuntimeException();//bruh moment
 			var v=Collections.unmodifiableList(values);
-			this.values=v.getClass()==values.getClass()?values:v;
+			allocateDone(v.getClass()==values.getClass()||v.getClass()==ArrayViewList.class?values:v);
 			this.blend=blend;
+			constr=Thread.currentThread().getStackTrace();
 		}
 		
 		public Instance(FileBlockHeader blockHeader, BlendFile blend){
-			this(blockHeader.bodyFilePos, blockHeader.bodySize, blend);
+			this(blockHeader.bodyFilePos, blend);
 		}
 		
-		public Instance(long dataStart, int dataSize, BlendFile blend){
+		public Instance(long dataStart, BlendFile blend){
 			this.dataStart=dataStart;
-			this.dataSize=dataSize;
 			this.blend=blend;
+			constr=Thread.currentThread().getStackTrace();
 		}
 		
 		public boolean isAllocated(){
@@ -110,17 +113,25 @@ public class Struct{
 			return length;
 		}
 		
+		private void allocateDone(List<Object> values){
+			if(values.size()!=fields.size()) throw new RuntimeException();//bruh moment
+			this.values=values;
+			hash=calcHashCode();
+		}
+		
 		public synchronized Instance allocate(){
 			if(isAllocated()) return this;
 			try{
 				blend.reopen(dataStart, in->{
 					long pos=in.position();
 					
-					values=DataParser.parseStructValues(struct(), in, blend);
+					allocateDone(DataParser.parseStructValues(struct(), in, blend));
 					
 					if(VALIDATE_READS){
 						
 						long read=in.position()-pos;
+						
+						short dataSize=struct().length;
 						
 						if(in.position()>dataStart+dataSize){
 							LogUtil.printlnEr("Likely corruption of "+(name()==null?type:type+"("+name()+")")+"? outside block body", dataStart+dataSize+" / "+in.position());
@@ -137,26 +148,24 @@ public class Struct{
 					}
 					
 				});
-				
-				if(LOG_ALOC){
-					double d=dataSize;
-					
-					int level=0;
-					while(d>1024){
-						d/=1024F;
-						level++;
-					}
-					
-					String ds=Double.toString(Math.round(d*100.0)/100.0);
-					if(ds.endsWith(".0")) ds=ds.substring(0, ds.length()-2);
-					
-					LogUtil.printTable("Allocated subject", struct().type.name+"("+name()+")", "Start at", "0x"+Long.toHexString(dataStart), "Object size", ds+List.of("b", "Kb", "Mb", "GB", "TB").get(level));
-				}
 			}catch(IOException e){
 				throw UtilL.uncheckedThrow(e);
 			}
 			
-			hash=calcHashCode();
+			if(LOG_ALOC){
+				double d=struct().length;
+				
+				int level=0;
+				while(d>1024){
+					d/=1024F;
+					level++;
+				}
+				
+				String ds=Double.toString(Math.round(d*100.0)/100.0);
+				if(ds.endsWith(".0")) ds=ds.substring(0, ds.length()-2);
+				
+				LogUtil.printTable("Allocated subject", struct().type.name+"("+name()+")", "Start at", "0x"+Long.toHexString(dataStart), "Object size", ds+List.of("b", "Kb", "Mb", "GB", "TB").get(level));
+			}
 			
 			return this;
 		}
@@ -206,7 +215,8 @@ public class Struct{
 				nameCache=nameFull.substring(switch(struct().type.name){
 					case "Object", "Mesh", "Material", "bNodeTree", "Scene", "World",
 							     "wmWindowManager", "WorkSpace", "bScreen", "FreestyleLineStyle",
-							     "Lamp", "Brush", "Collection", "Camera", "Image", "bGPdata", "Key" -> 2;
+							     "Lamp", "Brush", "Collection", "Camera", "Image", "bGPdata", "Key",
+							     "Library" -> 2;
 					default -> 0;
 				});
 			}
@@ -258,7 +268,7 @@ public class Struct{
 							}
 						}
 						
-						return "\t"+f.name+" = "+TextUtil.toString(v).replace("\n", "\n\t");
+						return "    "+f.name+" = "+TextUtil.toString(v).replace("\n", "\n    ");
 					}).collect(Collectors.joining(",\n"));
 				}finally{
 					INSTANCE_STACK.pop();
@@ -288,7 +298,8 @@ public class Struct{
 		}
 		
 		public <T extends BlendFile.Translator> List<T> getInstanceListTranslated(Object key){
-			return getInstanceList(key).stream().map(blend::<T>translate).collect(Collectors.toUnmodifiableList());
+			var l=getInstanceList(key);
+			return l==null?null:l.stream().map(blend::<T>translate).collect(Collectors.toList());
 		}
 		
 		public List<Instance> getInstanceList(Object key){
@@ -580,14 +591,18 @@ public class Struct{
 		}
 		
 		@Override
-		public synchronized boolean equals(Object o){
-			if(this==o) return true;
+		public boolean equals(Object o){
 			if(!(o instanceof Instance)) return false;
-			Instance instance=(Instance)o;
+			return equals((Instance)o);
+		}
+		
+		public boolean equals(Instance instance){
+			if(this==instance) return true;
+			if(instance==null) return false;
 			
-			if(this.dataStart!=-1&&instance.dataStart!=-1) return this.dataStart==instance.dataStart;
+			if(!Objects.equals(struct(), instance.struct())) return false;
 			
-			if(!Objects.equals(struct(), struct())) return false;
+			if(this.dataStart>0&&instance.dataStart>0&&blend==instance.blend) return this.dataStart==instance.dataStart;
 			
 			if(!Objects.equals(fullName(), instance.fullName())) return false;
 			
@@ -596,7 +611,7 @@ public class Struct{
 		
 		private int calcHashCode(){
 			
-			if(dataStart!=-1) return Long.hashCode(dataStart);
+			if(dataStart!=-1) return Objects.hash(dataStart, struct());
 			
 			String name=fullName();
 			if(name!=null) return name.hashCode();
@@ -611,6 +626,10 @@ public class Struct{
 		public int hashCode(){
 			allocate();
 			return hash;
+		}
+		
+		public boolean is(String typeName){
+			return struct().is(typeName);
 		}
 		
 		public Struct struct(){
@@ -693,6 +712,7 @@ public class Struct{
 		if(!(o instanceof Struct)) return false;
 		Struct struct=(Struct)o;
 		return type.equals(struct.type)&&
+		       fields.size()==struct.fields.size()&&
 		       fields.equals(struct.fields);
 	}
 	

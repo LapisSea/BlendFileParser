@@ -7,12 +7,14 @@ import com.lapissea.util.TextUtil;
 import com.lapissea.util.UtilL;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
 import java.util.function.Predicate;
 
 class DataParser{
 	
-	private static final boolean VALIDATE=true;
+	private static final boolean VALIDATE=false;
 	private static final boolean PRINT   =false;
 	
 	
@@ -63,286 +65,289 @@ class DataParser{
 		return type->typeArray(type, name);
 	}
 	
-	@SuppressWarnings("AutoBoxing")
-	private static final List<TypeParser> PRIMITIVES=Arrays.asList(
-			new TypeParserL(DnaType::isPointer, (type, data, blend)->{//first depointify anything
-				var ptr=data.readPtr();
-				if(ptr==0) return null;
-				else try{
-					
-					if(type.pointerLevel>1){
-						var block=blend.getBlock(ptr);
+	private static final List<TypeParser> PRIMITIVES;
+	
+	static{
+		PRIMITIVES=Arrays.asList(
+				new TypeParserL(DnaType::isPointer, (type, data, blend)->{//first depointify anything
+					var ptr=data.readPtr();
+					if(ptr==0) return null;
+					else try{
 						
-						int count=block.bodySize/blend.header.ptrSize*block.count;
-						var raw  =type.depointify();
-						
-						Object[] arr=new Object[count];
-						blend.reopen(block.bodyFilePos, in->{
-							for(int i=0;i<count;i++){
-								arr[i]=DataParser.parse(raw, in, blend);
-							}
-						});
-						return ArrayViewList.create(arr).obj2;
-					}
-					
-					var block =blend.getBlock(ptr);
-					var struct=blend.dna.getStruct(block.sdnaIndex);
-					
-					if(!type.is(struct.type.name)){
-						
-						if(!type.is("void")){
-							var raw      =type.depointify();
-							var knownSize=raw.size(blend);
+						if(type.pointerLevel>1){
+							var block=blend.getBlock(ptr);
 							
-							if(block.bodySize%knownSize!=0){
-								LogUtil.println(type, struct.type.name);
-								LogUtil.println(block, knownSize, block.bodySize%knownSize);
-								LogUtil.println(raw);
-//								type=type.castTo(struct.type.name);
-								
-								return blend.readBlock(block);
-//								throw new RuntimeException();//wtf??
-							}
+							int count=block.bodySize/blend.header.ptrSize*block.count;
+							var raw  =type.depointify();
 							
-							Object[] arr=new Object[block.bodySize/knownSize];
+							Object[] arr=new Object[count];
 							blend.reopen(block.bodyFilePos, in->{
-								for(int i=0;i<arr.length;i++){
+								for(int i=0;i<count;i++){
 									arr[i]=DataParser.parse(raw, in, blend);
 								}
 							});
-							
 							return ArrayViewList.create(arr).obj2;
 						}
 						
-						if(block.sdnaIndex==0){
-							return new Struct.UnknownData(blend, block);
+						var block =blend.getBlock(ptr);
+						var struct=block.getStruct();
+						
+						if(!type.is(struct.type.name)){
+							
+							if(!type.is("void")){
+								var raw      =type.depointify();
+								var knownSize=raw.size(blend);
+								
+								if(block.bodySize%knownSize!=0){
+//								LogUtil.println(type, struct.type.name);
+//								LogUtil.println(block, knownSize, block.bodySize%knownSize);
+//								LogUtil.println(raw);
+//								type=type.castTo(struct.type.name);
+									
+									return blend.readBlock(block);
+//								throw new RuntimeException();//wtf??
+								}
+								
+								Object[] arr=new Object[block.bodySize/knownSize];
+								blend.reopen(block.bodyFilePos, in->{
+									for(int i=0;i<arr.length;i++){
+										arr[i]=DataParser.parse(raw, in, blend);
+									}
+								});
+								
+								return ArrayViewList.create(arr).obj2;
+							}
+							
+							if(block.getStruct().id==0){
+								return new Struct.UnknownData(blend, block);
+							}
 						}
+						
+						return blend.readBlock(block);
+						
+					}catch(BlendFileMissingBlock e){
+						return blend.strayPointer(ptr);
 					}
-					
-					return blend.readBlock(block);
-					
-				}catch(BlendFileMissingBlock e){
-					return blend.strayPointer(ptr);
-				}
-			}),
-			new TypeParserL(t->t.isFunc, (t, d, b)->{
-				var ptr=d.readPtr();
-				if(ptr==0) return null;
-				throw new RuntimeException(ptr+"");
+				}),
+				new TypeParserL(t->t.isFunc, (t, d, b)->{
+					var ptr=d.readPtr();
+					if(ptr==0) return null;
+					throw new RuntimeException(ptr+"");
 //				return b.readBlock(ptr);
-			}),
-			new TypeParserL(type("void"), (t, d, b)->d.readPtr()),
-			new TypeParser(){
-				@Override
-				public boolean canParse(DnaType type){ return typeArray(type, "short"); }
-				
-				@Override
-				public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
-					Objects.requireNonNull(type.arraySize);
-					return switch(type.arraySize.size()){
-						case 1 -> {
-							var     num  =type.arraySize.get(0);
-							short[] array=new short[num];
-							for(int i=0;i<array.length;i++){
-								array[i]=data.read2BInt();
-							}
-							break array;
-						}
-						case 2 -> {
-							short[][] array=new short[type.arraySize.get(0)][type.arraySize.get(1)];
-							for(short[] ai : array){
-								for(int j=0, j1=ai.length;j<j1;j++){
-									ai[j]=data.read2BInt();
+				}),
+				new TypeParserL(type("void"), (t, d, b)->d.readPtr()),
+				new TypeParser(){
+					@Override
+					public boolean canParse(DnaType type){ return typeArray(type, "short"); }
+					
+					@Override
+					public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
+						Objects.requireNonNull(type.arraySize);
+						return switch(type.arraySize.size()){
+							case 1 -> {
+								var     num  =type.arraySize.get(0);
+								short[] array=new short[num];
+								for(int i=0;i<array.length;i++){
+									array[i]=data.read2BInt();
 								}
+								break array;
 							}
-							break array;
-						}
-						case 3 -> {
-							short[][][] array=new short[type.arraySize.get(0)][type.arraySize.get(1)][type.arraySize.get(2)];
-							for(short[][] ai : array){
-								for(short[] aij : ai){
-									for(int k=0, k1=aij.length;k<k1;k++){
-										aij[k]=data.read2BInt();
+							case 2 -> {
+								short[][] array=new short[type.arraySize.get(0)][type.arraySize.get(1)];
+								for(short[] ai : array){
+									for(int j=0, j1=ai.length;j<j1;j++){
+										ai[j]=data.read2BInt();
 									}
 								}
+								break array;
 							}
-							break array;
-						}
-						default -> throw new RuntimeException(type.arraySize.size()+" "+type.arraySize);
-					};
-				}
-			},
-			new TypeParser(){
-				@Override
-				public boolean canParse(DnaType type){ return typeArray(type, "int"); }
-				
-				
-				@Override
-				public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
-					Objects.requireNonNull(type.arraySize);
-					return switch(type.arraySize.size()){
-						case 1 -> {
-							var   num  =type.arraySize.get(0);
-							int[] array=new int[num];
-							for(int i=0;i<array.length;i++){
-								array[i]=data.read4BInt();
-							}
-							break array;
-						}
-						case 2 -> {
-							int[][] array=new int[type.arraySize.get(0)][type.arraySize.get(1)];
-							for(int[] ai : array){
-								for(int j=0, j1=ai.length;j<j1;j++){
-									ai[j]=data.read4BInt();
-								}
-							}
-							break array;
-						}
-						case 3 -> {
-							int[][][] array=new int[type.arraySize.get(0)][type.arraySize.get(1)][type.arraySize.get(2)];
-							for(int[][] ai : array){
-								for(int[] aij : ai){
-									for(int k=0, k1=aij.length;k<k1;k++){
-										aij[k]=data.read4BInt();
+							case 3 -> {
+								short[][][] array=new short[type.arraySize.get(0)][type.arraySize.get(1)][type.arraySize.get(2)];
+								for(short[][] ai : array){
+									for(short[] aij : ai){
+										for(int k=0, k1=aij.length;k<k1;k++){
+											aij[k]=data.read2BInt();
+										}
 									}
 								}
+								break array;
 							}
-							break array;
-						}
-						default -> throw new RuntimeException(type.arraySize.size()+" "+type.arraySize);
-					};
-				}
-			},
-			new TypeParser(){
-				@Override
-				public boolean canParse(DnaType type){ return typeArray(type, "char"); }
-				
-				@Override
-				public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
-					Objects.requireNonNull(type.arraySize);
-					return switch(type.arraySize.size()){
-						case 1 -> {
-							byte[] dat=new byte[type.arraySize.get(0)];
-							data.readNBytes(dat, 0, dat.length);
-							break dat;
-						}
-						case 2 -> {
-							byte[]   dat  =new byte[type.arraySize.get(1)];
-							byte[][] array=new byte[type.arraySize.get(0)][dat.length];
-							for(byte[] bytes : array){
-								data.readNBytes(bytes, 0, bytes.length);
+							default -> throw new RuntimeException(type.arraySize.size()+" "+type.arraySize);
+						};
+					}
+				},
+				new TypeParser(){
+					@Override
+					public boolean canParse(DnaType type){ return typeArray(type, "int"); }
+					
+					
+					@Override
+					public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
+						Objects.requireNonNull(type.arraySize);
+						return switch(type.arraySize.size()){
+							case 1 -> {
+								var   num  =type.arraySize.get(0);
+								int[] array=new int[num];
+								for(int i=0;i<array.length;i++){
+									array[i]=data.read4BInt();
+								}
+								break array;
 							}
-							break array;
-						}
-						case 3 -> {
-							byte[]     dat  =new byte[type.arraySize.get(2)];
-							byte[][][] array=new byte[type.arraySize.get(0)][type.arraySize.get(1)][dat.length];
-							for(byte[][] ar2 : array){
-								for(byte[] bytes : ar2){
+							case 2 -> {
+								int[][] array=new int[type.arraySize.get(0)][type.arraySize.get(1)];
+								for(int[] ai : array){
+									for(int j=0, j1=ai.length;j<j1;j++){
+										ai[j]=data.read4BInt();
+									}
+								}
+								break array;
+							}
+							case 3 -> {
+								int[][][] array=new int[type.arraySize.get(0)][type.arraySize.get(1)][type.arraySize.get(2)];
+								for(int[][] ai : array){
+									for(int[] aij : ai){
+										for(int k=0, k1=aij.length;k<k1;k++){
+											aij[k]=data.read4BInt();
+										}
+									}
+								}
+								break array;
+							}
+							default -> throw new RuntimeException(type.arraySize.size()+" "+type.arraySize);
+						};
+					}
+				},
+				new TypeParser(){
+					@Override
+					public boolean canParse(DnaType type){ return typeArray(type, "char"); }
+					
+					@Override
+					public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
+						Objects.requireNonNull(type.arraySize);
+						return switch(type.arraySize.size()){
+							case 1 -> {
+								byte[] dat=new byte[type.arraySize.get(0)];
+								data.readNBytes(dat, 0, dat.length);
+								break dat;
+							}
+							case 2 -> {
+								byte[]   dat  =new byte[type.arraySize.get(1)];
+								byte[][] array=new byte[type.arraySize.get(0)][dat.length];
+								for(byte[] bytes : array){
 									data.readNBytes(bytes, 0, bytes.length);
 								}
+								break array;
 							}
-							break array;
-						}
-						default -> throw new RuntimeException(type.arraySize.size()+" "+type.arraySize);
-					};
-				}
-			},
-			new TypeParser(){
-				@Override
-				public boolean canParse(DnaType type){ return typeArray(type, "float"); }
-				
-				@Override
-				public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
-					Objects.requireNonNull(type.arraySize);
-					return switch(type.arraySize.size()){
-						case 1 -> {
-							var     num  =type.arraySize.get(0);
-							float[] array=new float[num];
-							for(int i=0;i<array.length;i++){
-								array[i]=data.read4BFloat();
-							}
-							break array;
-						}
-						case 2 -> {
-							float[][] array=new float[type.arraySize.get(0)][type.arraySize.get(1)];
-							for(float[] ai : array){
-								for(int j=0, j1=ai.length;j<j1;j++){
-									ai[j]=data.read4BFloat();
-								}
-							}
-							break array;
-						}
-						case 3 -> {
-							float[][][] array=new float[type.arraySize.get(0)][type.arraySize.get(1)][type.arraySize.get(2)];
-							for(float[][] ai : array){
-								for(float[] aij : ai){
-									for(int k=0, k1=aij.length;k<k1;k++){
-										aij[k]=data.read4BFloat();
+							case 3 -> {
+								byte[]     dat  =new byte[type.arraySize.get(2)];
+								byte[][][] array=new byte[type.arraySize.get(0)][type.arraySize.get(1)][dat.length];
+								for(byte[][] ar2 : array){
+									for(byte[] bytes : ar2){
+										data.readNBytes(bytes, 0, bytes.length);
 									}
 								}
+								break array;
 							}
-							break array;
-						}
-						default -> throw new RuntimeException(type.arraySize.size()+" "+type.arraySize);
-					};
-				}
-			},
-			new TypeParserL(type("void"), (t, d, b)->d.readPtr()),
-			new TypeParserL(type("int"), (t, d, b)->d.read4BInt()),
-			new TypeParserL(type("char"), (t, d, b)->d.read()),
-			new TypeParserL(type("uchar"), (t, d, b)->d.read()),
-			new TypeParserL(type("short"), (t, d, b)->d.read2BInt()),
-			new TypeParserL(type("ushort"), (t, d, b)->d.read2BInt()),
-			new TypeParserL(type("long"), (t, d, b)->d.read8BInt()),
-			new TypeParserL(type("uint64_t"), (t, d, b)->d.read8BInt()),
-			new TypeParserL(type("int64_t"), (t, d, b)->d.read8BInt()),
-			new TypeParserL(type("float"), (t, d, b)->d.read4BFloat()),
-			new TypeParserL(type("double"), (t, d, b)->d.read8BFloat()),
-			new TypeParserL(type("ListBase"), (type, data, blend)->{//allocate linked list
-				long first=data.readPtr();
-				long last =data.readPtr();
-				if(first==0) return List.of();
-				try{
-					var arr=blend.readBlock(first);
-					if(arr instanceof List) throw new RuntimeException();
-					return new StructLinkedList((Struct.Instance)arr);
-				}catch(BlendFileMissingBlock e){
-					return blend.strayPointer(first);
-				}
-			}),
-			new TypeParser(){
-				@Override
-				public boolean canParse(DnaType type){ return type.isArray(); }//struct array
-				
-				@SuppressWarnings("ConstantConditions")
-				@Override
-				public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
-					Object[] array=new Object[type.arraySize.get(0)];
-					
-					for(int i=0;i<array.length;i++){
-						array[i]=DataParser.parse(type.dearrify(), data, blend);
+							default -> throw new RuntimeException(type.arraySize.size()+" "+type.arraySize);
+						};
 					}
+				},
+				new TypeParser(){
+					@Override
+					public boolean canParse(DnaType type){ return typeArray(type, "float"); }
 					
-					Class<?> allType=Arrays.stream(array).filter(Objects::nonNull).map(o->(Class)o.getClass()).reduce(UtilL::findClosestCommonSuper).orElse(Object.class);
-					if(allType==Object.class) return array;
+					@Override
+					public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
+						Objects.requireNonNull(type.arraySize);
+						return switch(type.arraySize.size()){
+							case 1 -> {
+								var     num  =type.arraySize.get(0);
+								float[] array=new float[num];
+								for(int i=0;i<array.length;i++){
+									array[i]=data.read4BFloat();
+								}
+								break array;
+							}
+							case 2 -> {
+								float[][] array=new float[type.arraySize.get(0)][type.arraySize.get(1)];
+								for(float[] ai : array){
+									for(int j=0, j1=ai.length;j<j1;j++){
+										ai[j]=data.read4BFloat();
+									}
+								}
+								break array;
+							}
+							case 3 -> {
+								float[][][] array=new float[type.arraySize.get(0)][type.arraySize.get(1)][type.arraySize.get(2)];
+								for(float[][] ai : array){
+									for(float[] aij : ai){
+										for(int k=0, k1=aij.length;k<k1;k++){
+											aij[k]=data.read4BFloat();
+										}
+									}
+								}
+								break array;
+							}
+							default -> throw new RuntimeException(type.arraySize.size()+" "+type.arraySize);
+						};
+					}
+				},
+				new TypeParserL(type("void"), (t, d, b)->d.readPtr()),
+				new TypeParserL(type("int"), (t, d, b)->d.read4BInt()),
+				new TypeParserL(type("char"), (t, d, b)->d.read()),
+				new TypeParserL(type("uchar"), (t, d, b)->d.read()),
+				new TypeParserL(type("short"), (t, d, b)->d.read2BInt()),
+				new TypeParserL(type("ushort"), (t, d, b)->d.read2BInt()),
+				new TypeParserL(type("long"), (t, d, b)->d.read8BInt()),
+				new TypeParserL(type("uint64_t"), (t, d, b)->d.read8BInt()),
+				new TypeParserL(type("int64_t"), (t, d, b)->d.read8BInt()),
+				new TypeParserL(type("float"), (t, d, b)->d.read4BFloat()),
+				new TypeParserL(type("double"), (t, d, b)->d.read8BFloat()),
+				new TypeParserL(type("ListBase"), (type, data, blend)->{//allocate linked list
+					long first=data.readPtr();
+					long last =data.readPtr();
+					if(first==0) return List.of();
+					try{
+						var arr=blend.readBlock(first);
+						if(arr instanceof List) throw new RuntimeException();
+						return new StructLinkedList((Struct.Instance)arr);
+					}catch(BlendFileMissingBlock e){
+						return blend.strayPointer(first);
+					}
+				}),
+				new TypeParser(){
+					@Override
+					public boolean canParse(DnaType type){ return type.isArray(); }//struct array
 					
-					var typed=UtilL.array(allType, array.length);
-					System.arraycopy(array, 0, typed, 0, array.length);
-					return typed;
-				}
-			});
+					@SuppressWarnings("ConstantConditions")
+					@Override
+					public Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
+						Object[] array=new Object[type.arraySize.get(0)];
+						
+						for(int i=0;i<array.length;i++){
+							array[i]=DataParser.parse(type.dearrify(), data, blend);
+						}
+						
+						Class<?> allType=Arrays.stream(array).filter(Objects::nonNull).map(o->(Class)o.getClass()).reduce(UtilL::findClosestCommonSuper).orElse(Object.class);
+						if(allType==Object.class) return array;
+						
+						var typed=UtilL.array(allType, array.length);
+						System.arraycopy(array, 0, typed, 0, array.length);
+						return typed;
+					}
+				});
+	}
 	
-	static Struct.Instance parseStruct(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
+	private static Struct.Instance parseStruct(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
 		Struct struct   =blend.dna.getStruct(type);
 		long   dataStart=data.position();
-		var    values   =parseStructValues(struct, data, blend);
-		return struct.new Instance(values, blend, dataStart, struct.length);
+		var    values   =parseStructValues(struct, data, blend);//read data now as it is not a pointer and data is at easy access
+		return struct.new Instance(values, blend, dataStart);
 	}
 	
 	static List<Object> parseStructValues(Struct struct, BlendInputStream data, BlendFile blend) throws IOException{
 		
-		var values=new ArrayList<>(struct.fields.size());
+		var values=new Object[struct.fields.size()];
 		
 		long   startPos, p;
 		String tab;
@@ -355,12 +360,12 @@ class DataParser{
 			}
 		}
 		
-		for(Field field : struct.fields){
+		List<Field> fields=struct.fields;
+		for(int i1=0;i1<fields.size();i1++){
+			Field field=fields.get(i1);
 			if(VALIDATE) p=data.position();
-
-			Object v=field.read(data, blend);
 			
-			if(!VALIDATE&&!(v instanceof Number)&&field.name.startsWith("_pad")) v=null;
+			Object v=field.read(data, blend);
 			
 			if(VALIDATE){
 				long newP=data.position(),
@@ -403,8 +408,8 @@ class DataParser{
 					LogUtil.println("\nFailed to allocate:", struct);
 					LogUtil.println("Reason:", fail);
 					int pos=0;
-					for(int i=0;i<values.size();i++){
-						var vl=values.get(i);
+					for(int i=0;i<values.length;i++){
+						var vl=values[i];
 						if(vl instanceof Struct.Instance){
 							vl=((Struct.Instance)vl).struct().type;
 						}
@@ -424,13 +429,14 @@ class DataParser{
 				}
 			}
 			
+			if(field.name.startsWith("_pad")) v=null;
 			
-			values.add(v);
+			values[i1]=v;
 		}
 		
 		if(VALIDATE&&PRINT) LogUtil.println();
 		
-		return Collections.unmodifiableList(values);
+		return ArrayViewList.create(values).obj2;
 	}
 	
 	static Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{

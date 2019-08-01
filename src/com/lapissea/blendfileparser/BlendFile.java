@@ -8,11 +8,14 @@ import com.lapissea.util.function.TriFunction;
 import com.lapissea.util.function.UnsafeConsumer;
 import com.lapissea.util.function.UnsafeFunction;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.ParameterizedType;
+import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -22,83 +25,101 @@ import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 
 import static com.lapissea.blendfileparser.BlockCode.*;
+import static com.lapissea.util.UtilL.*;
 
 public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	
 	@NotNull
-	public static BlendFile read(Supplier<InputStream> fileSource, String path) throws IOException{
-		return new BlendFile(fileSource, path);
+	public static BlendFile read(File file) throws IOException{
+		Assert(file.isFile());
+		File dir=Objects.requireNonNull(file.getParentFile());
+		
+		return read(FileInputStream::new, file.getPath());
 	}
 	
-	private final Supplier<InputStream> source;
-	private final String                path;
-	public final  ID<?>                 id;
+	@NotNull
+	public static BlendFile read(UnsafeFunction<String, InputStream, IOException> dataProvider, String blendName) throws IOException{
+		return new BlendFile(dataProvider, blendName);
+	}
+	
+	final         UnsafeFunction<String, InputStream, IOException> source;
+	private final String                                           name;
+	public final  ID<?>                                            id;
 	
 	final         BlendFileHeader            header;
 	public final  Dna1                       dna;
-	private final Map<Long, FileBlockHeader> blockMap;
-	private final FileBlockHeader[]          blocks;
-	private       Struct                     strayPointerType;
+	private final Map<Long, FileBlockHeader> blockPtrIndex;
+	final         FileBlockHeader[]          blocks;
+	private final Struct                     strayPointerType;
 	
 	private final Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, TypeOptimizations.InstanceComposite>> typeOptimizations;
 	
 	private final Map<Struct.Instance, Translator>                             translationCache=new HashMap<>();
-	private final Map<String, Function<Struct.Instance, ? extends Translator>> translators     =new HashMap<>();
+	final         Map<String, Function<Struct.Instance, ? extends Translator>> translators     =new HashMap<>();
 	
 	public interface Translator{
 		void translate(Struct.Instance data);
 	}
 	
-	private BlendFile(Supplier<InputStream> fileSource, String path) throws IOException{
-		source=fileSource;
-		this.path=path;
+	{
+		registerTranslator(Library::new);
+	}
+	
+	private BlendFile(UnsafeFunction<String, InputStream, IOException> dataProvider, String blendName) throws IOException{
+		source=dataProvider;
+		this.name=blendName;
 		id=new ID<>(this);
 		
 		try(var blendFile=openSource()){
+			var supportsMark=blendFile.markSupported();
 			
-			if(!blendFile.markSupported()) throw new RuntimeException();
-			
-			blendFile.mark(BlendFileHeader.BYTE_SIZE);
+			if(supportsMark) blendFile.mark(BlendFileHeader.BYTE_SIZE);
 			BlendFileHeader header;
 			try{
 				header=new BlendFileHeader(blendFile, false);
 			}catch(IOException e){
-				blendFile.reset();
-				GZIPInputStream zipped=new GZIPInputStream(blendFile);
-				header=new BlendFileHeader(zipped, true);
+				if(supportsMark){
+					blendFile.reset();
+					header=new BlendFileHeader(new GZIPInputStream(blendFile), true);
+				}else{
+					blendFile.close();
+					try(var s=openSource()){
+						header=new BlendFileHeader(new GZIPInputStream(s), true);
+					}
+				}
 			}
 			this.header=header;
 		}
 		
+		
 		strayPointerType=new Struct(-1, (short)header.ptrSize, new DnaType("StrayPointer", 0, false, null), List.of(new Field("void", "badPtr")));
 		
-		
-		final Dna1[]   dna      ={null};
-		Consumer<Dna1> dnaSetter=d->dna[0]=d;
-		
 		var blockBuilder=new LinkedList<FileBlockHeader>();
-		
-		try(var in=reopen()){
-			in.skipNBytes(BlendFileHeader.BYTE_SIZE);
-			while(true){
-				var block=new FileBlockHeader(in, dnaSetter);
-				if(block.code==END) break;
-				blockBuilder.add(block);
+		{
+			Dna1[]         dna      ={null};
+			Consumer<Dna1> dnaSetter=d->dna[0]=d;
+			
+			try(var in=reopen()){
+				in.skipNBytes(BlendFileHeader.BYTE_SIZE);
+				while(true){
+					var block=new FileBlockHeader(in, dnaSetter);
+					if(block.code==END) break;
+					blockBuilder.add(block);
+				}
 			}
+			
+			this.dna=Objects.requireNonNull(dna[0]);
 		}
-		
-		this.dna=Objects.requireNonNull(dna[0]);
-
-//		LogUtil.println(this.dna.getStruct("bNodeSocketValueFloat"));
-//		System.exit(0);
 		
 		typeOptimizations=TypeOptimizations.get(this.dna);
 		
 		blocks=blockBuilder.toArray(FileBlockHeader[]::new);
 		
-		blockMap=new HashMap<>(blocks.length);
+		blockPtrIndex=new HashMap<>(blocks.length);
 		for(FileBlockHeader b : blocks){
-			blockMap.put(b.oldPtr, b);
+			b.init(dna);
+			//noinspection AutoBoxing
+			blockPtrIndex.put(b.oldPtr, b);
 		}
 	}
 	
@@ -207,6 +228,11 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		registerTranslator(structName, classToNew(directTranslation));
 	}
 	
+	public <T extends Translator> void registerTranslator(@NotNull Supplier<T> translator){
+		T t=translator.get();
+		registerTranslator(t.getClass().getSimpleName(), translator);
+	}
+	
 	public <T extends Translator> void registerTranslator(@NotNull String structName, @NotNull Supplier<T> translator){
 		registerTranslator(structName, data->translator.get());
 	}
@@ -217,8 +243,16 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		translators.put(structName, translator);
 	}
 	
-	@SuppressWarnings({"unchecked", "SynchronizationOnLocalVariableOrMethodParameter"})
+	private final Map<Struct.Instance, Struct.Instance> translationLocks=new HashMap<>();
+	
+	@SuppressWarnings({"unchecked"})
 	public <T extends Translator> T translate(Struct.Instance instance){
+		if(instance==null) return null;
+		
+		Assert(instance.blend==this);
+		synchronized(translationLocks){
+			instance=translationLocks.computeIfAbsent(instance, k->k);
+		}
 		synchronized(instance){//need to synchronize over each instance separately to enable reading unrelated objects at the same time to preserve a high level of parallelism
 			T t=(T)translationCache.get(instance);
 			if(t==null){
@@ -250,7 +284,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	}
 	
 	private Object parseBlock(FileBlockHeader blockHeader){
-		var struct=dna.getStruct(blockHeader.sdnaIndex);
+		var struct=blockHeader.getStruct();
 		
 		var optimization=typeOptimizations.get(struct.type.name);
 		if(optimization!=null){
@@ -266,62 +300,63 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 			LogUtil.println(struct);
 		}
 		
-		var data=new Struct.Instance[blockHeader.count];
-		for(int i=0;i<data.length;i++){
-			data[i]=struct.new Instance(blockHeader.bodyFilePos+struct.length*i, blockHeader.bodySize, this);
-		}
-		
-		return List.of(data);
+		return new BlockArrayList(blockHeader, this);
 	}
 	
 	@NotNull
 	Object readBlock(FileBlockHeader blockHeader){
-		
-		if(blockHeader.bodyCache==null){
-			Object obj=parseBlock(blockHeader);
-			blockHeader.bodyCache=new WeakReference<>(obj);
-			return obj;
+		synchronized(this){
+			if(blockHeader.bodyCache==null){
+				Object obj=parseBlock(blockHeader);
+				blockHeader.bodyCache=new WeakReference<>(obj);
+				return obj;
+			}
+			
+			Object obj=blockHeader.bodyCache.get();
+			if(obj!=null) return obj;
+			
+			blockHeader.bodyCache=null;
+			
+			return readBlock(blockHeader);
 		}
-		
-		Object obj=blockHeader.bodyCache.get();
-		if(obj!=null) return obj;
-		
-		blockHeader.bodyCache=null;
-		
-		return readBlock(blockHeader);
 	}
 	
-	BlendInputStream inCache;
+	Map<Thread, BlendInputStream> inCacheMap=new HashMap<>();
 	
 	
 	private BlendInputStream getSourceAt(long pos) throws IOException{
+		Thread ct=Thread.currentThread();
+		
+		BlendInputStream inCache=inCacheMap.get(ct);
 		
 		if(inCache==null){
 			inCache=reopen();
+			inCacheMap.put(ct, inCache);
 		}
 		
 		long toSkip=pos-inCache.position();
 		
 		if(toSkip<0){
 			inCache.close();
-			inCache=null;
+			inCacheMap.remove(ct);
 			return getSourceAt(pos);
 		}
 		
 		if(toSkip>0){
 			inCache.skipNBytes(toSkip);
 		}
+		
 		var c=inCache;
-		inCache=null;
+		inCacheMap.remove(ct);
 		return c;
 	}
 	
 	private void putSource(BlendInputStream c) throws IOException{
+		var inCache=inCacheMap.put(Thread.currentThread(), c);
 		if(inCache!=null) inCache.close();
-		inCache=c;
 	}
 	
-	synchronized <T> T reopen(long pos, UnsafeFunction<BlendInputStream, T, IOException> session) throws IOException{
+	<T> T reopen(long pos, UnsafeFunction<BlendInputStream, T, IOException> session) throws IOException{
 		var s=getSourceAt(pos);
 		try{
 			return session.apply(s);
@@ -330,9 +365,8 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		}
 	}
 	
-	synchronized void reopen(long pos, UnsafeConsumer<BlendInputStream, IOException> session) throws IOException{
+	void reopen(long pos, UnsafeConsumer<BlendInputStream, IOException> session) throws IOException{
 		var s=getSourceAt(pos);
-		inCache=null;
 		try{
 			session.accept(s);
 		}finally{
@@ -340,41 +374,13 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		}
 	}
 	
-	private InputStream openSource(){
-		var s1=source.get();
-		if(s1==null) throw new RuntimeException("missing "+path);
+	private InputStream openSource() throws IOException{
+		var s1=source.apply(name);
+		if(s1==null) throw new RuntimeException("missing "+name);
 		return s1;
 	}
 	
-	private static class Cache{
-		byte[] data=new byte[1<<12];
-		int    size=0;
-		
-		int size(){
-			return size;
-		}
-		
-		void ensureCapacity(int newCap){
-			if(data.length >= newCap) return;
-			
-			byte[] old=data;
-			
-			data=new byte[old.length<<1];
-			System.arraycopy(old, 0, data, 0, size);
-		}
-		
-		byte[] getData(){
-			return data;
-		}
-		
-		public void add(byte[] src, int start, int read){
-			ensureCapacity(size+read);
-			System.arraycopy(src, 0, data, size, read);
-			size+=read;
-		}
-	}
-	
-	private Cache       blendFileCache;
+	private ByteBuffer  fileCache;
 	private InputStream cacheFiller;
 	
 	private BlendInputStream reopen() throws IOException{
@@ -383,30 +389,37 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		if(header.compressed){
 			if(cacheFiller==null){
 				cacheFiller=new GZIPInputStream(openSource());
-				blendFileCache=new Cache();
+				fileCache=ByteBuffer.allocate(1<<16);
 			}
 			
-			
-			in=new InputStream(){
+			class CacheReader extends InputStream{
 				int pos;
-				byte[] bulk=new byte[1024*4];
 				
+				@SuppressWarnings("SynchronizeOnNonFinalField")
 				private void ensure(int newBytes) throws IOException{
-					synchronized(cacheFiller){
+					synchronized(fileCache){
 						int newLimit=pos+newBytes;
-						int toRead  =newLimit-blendFileCache.size();
-						if(toRead<=0) return;
+						int toRead  =newLimit-fileCache.position();
 						
-						blendFileCache.ensureCapacity(newLimit);
 						while(toRead>0){
-							var read=cacheFiller.read(bulk);
+							if(!fileCache.hasRemaining()){//buffer is full, need to grow
+								
+								var old=fileCache;
+								fileCache=ByteBuffer.allocate(old.capacity()<<1);
+								fileCache.put(old.flip());
+								continue;
+							}
+							
+							var read=cacheFiller.read(fileCache.array(), fileCache.position(), fileCache.remaining());
+							fileCache.position(fileCache.position()+read);
+							
 							if(read<=0){
 								cacheFiller.close();
 								cacheFiller=null;
 								break;
 							}
 							toRead-=read;
-							blendFileCache.add(bulk, 0, read);
+							
 						}
 					}
 				}
@@ -414,7 +427,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 				@Override
 				public int read(@NotNull byte[] b, int off, int len) throws IOException{
 					ensure(off+len);
-					System.arraycopy(blendFileCache.getData(), pos, b, off, len);
+					System.arraycopy(fileCache.array(), pos, b, off, len);
 					pos+=len;
 					return len;
 				}
@@ -429,18 +442,20 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 				@Override
 				public int read() throws IOException{
 					ensure(1);
-					var b=blendFileCache.getData()[pos];
+					var b=fileCache.get(pos);
 					pos++;
 					return b;
 				}
-			};
+			}
+			in=new CacheReader();
 		}else in=openSource();
 		
 		return new BlendInputStream(in, header);
 	}
 	
+	@SuppressWarnings("AutoBoxing")
 	FileBlockHeader getBlock(long ptr) throws BlendFileMissingBlock{
-		var b=blockMap.get(ptr);
+		var b=blockPtrIndex.get(ptr);
 		if(b==null){
 			throw new BlendFileMissingBlock("invalid block ptr: "+ptr);
 		}
@@ -453,11 +468,13 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		if(cacheFiller!=null){
 			cacheFiller.close();
 			cacheFiller=null;
+			fileCache=null;
 		}
 		
-		blendFileCache=null;
-		inCache.close();
-		inCache=null;
+		for(BlendInputStream inCache : inCacheMap.values()){
+			inCache.close();
+		}
+		inCacheMap=null;
 	}
 	
 	@SuppressWarnings("AutoBoxing")
@@ -472,12 +489,12 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	
 	@Override
 	public int compareTo(@NotNull BlendFile o){
-		return o==this?0:path.compareTo(o.path);
+		return o==this?0:name.compareTo(o.name);
 	}
 	
 	@Override
 	public String toString(){
-		return path;
+		return name;
 	}
 	
 	@SuppressWarnings("deprecation")

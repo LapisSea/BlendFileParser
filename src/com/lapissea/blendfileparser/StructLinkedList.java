@@ -7,8 +7,6 @@ import java.util.*;
 
 class StructLinkedList implements List<Struct.Instance>{
 	
-	private static final Struct.Instance[] INS=new Struct.Instance[0];
-	
 	private List<Struct.Instance> data;
 	private boolean               done;
 	
@@ -82,7 +80,7 @@ class StructLinkedList implements List<Struct.Instance>{
 	@Override
 	public Struct.Instance[] toArray(){
 		readAll();
-		return data.toArray(INS);
+		return data.toArray(Struct.INS);
 	}
 	
 	@SuppressWarnings("SuspiciousToArrayCall")

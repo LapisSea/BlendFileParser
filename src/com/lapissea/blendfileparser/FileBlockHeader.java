@@ -10,12 +10,12 @@ public class FileBlockHeader{
 	
 	WeakReference<Object> bodyCache;
 	
-	public final BlockCode code;
-	public final int       bodySize;
-	public final long      oldPtr;
-	public final int       sdnaIndex;
-	public final int       count;
-	public final long      bodyFilePos;
+	public final  BlockCode code;
+	public final  int       bodySize;
+	public final  long      oldPtr;
+	private final int       sdnaIndex;
+	public final  int       count;
+	public final  long      bodyFilePos;
 	
 	public FileBlockHeader(BlendInputStream in, Consumer<Dna1> dnaSetter) throws IOException{
 		
@@ -29,5 +29,15 @@ public class FileBlockHeader{
 		if(code==DNA1) dnaSetter.accept(new Dna1(in));
 		else in.skipNBytes(bodySize);
 		
+	}
+	
+	private Struct struct;
+	
+	void init(Dna1 dna){
+		struct=dna.getStruct(sdnaIndex);
+	}
+	
+	public Struct getStruct(){
+		return struct;
 	}
 }
