@@ -33,7 +33,7 @@ public class BlendInputStream extends InputStream{
 		bb8=ByteBuffer.allocate(8).order(header.order);
 	}
 	
-	ByteBuffer read(ByteBuffer bb) throws IOException{
+	private ByteBuffer read(ByteBuffer bb) throws IOException{
 		var a   =bb.array();
 		var read=read(a);
 		if(read==-1) throw new BlendFileIOException("Unexpected file end");

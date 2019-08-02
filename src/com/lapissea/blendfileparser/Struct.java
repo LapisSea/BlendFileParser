@@ -63,6 +63,12 @@ public class Struct{
 		}
 	}
 	
+	public static final List<String> IGNORE_VALUES=new ArrayList<>(
+			List.of("runtime",
+			        "_pad", "_pad0", "_pad1", "_pad2", "_pad3", "_pad4",
+			        "py_instance"
+			       ));
+	
 	public static final Struct.Instance[] INS={};
 	
 	private static final boolean LOG_ALOC      =false;
@@ -79,20 +85,16 @@ public class Struct{
 		
 		private List<Object> values;
 		
-		public final StackTraceElement[] constr;
-		
 		private int hash;
 		
-		public Instance(List<Object> values, BlendFile blend){
+		public Instance(Object[] values, BlendFile blend){
 			this(values, blend, -1);
 		}
 		
-		public Instance(List<Object> values, BlendFile blend, long dataStart){
+		public Instance(Object[] values, BlendFile blend, long dataStart){
 			this.dataStart=dataStart;
-			var v=Collections.unmodifiableList(values);
-			allocateDone(v.getClass()==values.getClass()||v.getClass()==ArrayViewList.class?values:v);
+			allocateDone(values);
 			this.blend=blend;
-			constr=Thread.currentThread().getStackTrace();
 		}
 		
 		public Instance(FileBlockHeader blockHeader, BlendFile blend){
@@ -102,7 +104,6 @@ public class Struct{
 		public Instance(long dataStart, BlendFile blend){
 			this.dataStart=dataStart;
 			this.blend=blend;
-			constr=Thread.currentThread().getStackTrace();
 		}
 		
 		public boolean isAllocated(){
@@ -113,9 +114,39 @@ public class Struct{
 			return length;
 		}
 		
-		private void allocateDone(List<Object> values){
-			if(values.size()!=fields.size()) throw new RuntimeException();//bruh moment
-			this.values=values;
+		private void allocateDone(Object[] values){
+			if(values.length!=fields.size()) throw new RuntimeException();//bruh moment
+			this.values=new AbstractList<Object>(){
+				boolean[] safe=new boolean[values.length];
+				
+				Object secure(Object v){
+					if(v==null) return null;
+					
+					if(v instanceof Instance){
+						var inst=(Instance)v;
+						if(inst.is("ID")){
+							Library lib=inst.getInstanceTranslated("lib");
+							if(lib!=null) return lib.get(inst.getString("name"));
+						}
+					}
+					
+					return v;
+				}
+				
+				@Override
+				public Object get(int index){
+					if(!safe[index]){
+						values[index]=secure(values[index]);
+						safe[index]=true;
+					}
+					return values[index];
+				}
+				
+				@Override
+				public int size(){
+					return values.length;
+				}
+			};
 			hash=calcHashCode();
 		}
 		
@@ -232,13 +263,13 @@ public class Struct{
 			synchronized(INSTANCE_STACK){
 				INSTANCE_STACK.push(this);
 				try{
-					result+=IntStream.range(0, values.size()).mapToObj(i->{
+					result+=IntStream.range(0, values.size()).filter(i->!IGNORE_VALUES.contains(fields.get(i))).mapToObj(i->{
+						var f=fields.get(i);
 						var v=values.get(i);
 						if(v instanceof String){
 							v="\""+((String)v).replace("\n", "\\n")+'"';
 						}
 						
-						var f=fields.get(i);
 						
 						if(v instanceof byte[]){
 							v="\""+getString(f.name)+'"';
@@ -368,14 +399,6 @@ public class Struct{
 		
 		@Override
 		public Object get(Object key){
-			try{
-				return getExc(key);
-			}catch(BlendFileMissingValue e){
-				throw UtilL.uncheckedThrow(e);
-			}
-		}
-		
-		private Object getExc(Object key) throws BlendFileMissingValue{
 			Integer id=fieldIndex.get(key);
 			if(id==null) throw new BlendFileMissingValue("\""+key+"\" field missing in \""+type+"\"{"+fields.stream().map(field->field.name).collect(Collectors.joining(", "))+"}");
 			
@@ -408,10 +431,10 @@ public class Struct{
 			return getByte(key)==1;
 		}
 		
-		public int getShort(Object key){
+		public short getShort(Object key){
 			var k=get(key);
 			if(k instanceof Short) return (Short)k;
-			else return ((Number)k).intValue();
+			else return ((Number)k).shortValue();
 		}
 		
 		public float getFloat(Object key){

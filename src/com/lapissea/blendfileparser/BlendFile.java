@@ -479,7 +479,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	
 	@SuppressWarnings("AutoBoxing")
 	Struct.Instance strayPointer(long ptr){
-		return strayPointerType.new Instance(List.of(ptr), this){
+		return strayPointerType.new Instance(new Object[]{ptr}, this){
 			@Override
 			public int hashCode(){
 				return Long.hashCode(ptr);

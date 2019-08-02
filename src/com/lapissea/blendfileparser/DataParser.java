@@ -345,7 +345,7 @@ class DataParser{
 		return struct.new Instance(values, blend, dataStart);
 	}
 	
-	static List<Object> parseStructValues(Struct struct, BlendInputStream data, BlendFile blend) throws IOException{
+	static Object[] parseStructValues(Struct struct, BlendInputStream data, BlendFile blend) throws IOException{
 		
 		var values=new Object[struct.fields.size()];
 		
@@ -361,8 +361,16 @@ class DataParser{
 		}
 		
 		List<Field> fields=struct.fields;
-		for(int i1=0;i1<fields.size();i1++){
+		
+		for(int i1=0, j=fields.size();i1<j;i1++){
 			Field field=fields.get(i1);
+			
+			if(Struct.IGNORE_VALUES.contains(field.name)){
+				data.skipNBytes(field.type.size(blend));
+				values[i1]=null;
+				continue;
+			}
+			
 			if(VALIDATE) p=data.position();
 			
 			Object v=field.read(data, blend);
@@ -429,14 +437,12 @@ class DataParser{
 				}
 			}
 			
-			if(field.name.startsWith("_pad")) v=null;
-			
 			values[i1]=v;
 		}
 		
 		if(VALIDATE&&PRINT) LogUtil.println();
 		
-		return ArrayViewList.create(values).obj2;
+		return values;
 	}
 	
 	static Object parse(DnaType type, BlendInputStream data, BlendFile blend) throws IOException{
