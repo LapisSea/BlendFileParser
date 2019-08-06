@@ -30,13 +30,19 @@ public class Struct{
 	}
 	
 	static class UnknownData{
-		private final BlendFile       blend;
-		private final FileBlockHeader dataSource;
-		private       Object          data;
+		private BlendFile       blend;
+		private FileBlockHeader dataSource;
+		private Object          data;
 		
 		UnknownData(BlendFile blend, FileBlockHeader dataSource){
 			this.blend=blend;
 			this.dataSource=dataSource;
+		}
+		
+		@Override
+		public String toString(){
+			if(blend==null) return TextUtil.toString(data);
+			return dataSource.code+"("+dataSource.getStruct().type+", count="+dataSource.count+", at "+dataSource.bodyFilePos+")";
 		}
 		
 		private synchronized Object read(Struct struct){
@@ -54,6 +60,8 @@ public class Struct{
 						}
 						return ArrayViewList.create(arr).obj2;
 					});
+					blend=null;
+					dataSource=null;
 				}catch(IOException e){
 					throw UtilL.uncheckedThrow(e);
 				}

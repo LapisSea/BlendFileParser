@@ -185,7 +185,7 @@ public class TypeOptimizations{
 	
 	public static class MVert extends InstanceComposite<MVert> implements Iterable<MVert.View>{
 		public float[] co;
-		public float[] no;
+		public short[] no;
 		
 		public MVert(Struct struct, FileBlockHeader blockHeader, BlendFile blend){
 			super(struct, blockHeader, blend);
@@ -198,26 +198,19 @@ public class TypeOptimizations{
 			var buff =buffB.asFloatBuffer();
 			
 			co=new float[count*3];
-			no=new float[count*3];
+			no=new short[count*3];
 			for(int i=0;i<count;i++){
 				in.readNBytes(arr, 0, arr.length);
-//				LogUtil.println(arr);
 				int off=i*3;
-//				buff.position(0).get(co, off, 3);
 				buffB.position(0);
 				co[off+0]=buffB.getFloat();
 				co[off+1]=buffB.getFloat();
 				co[off+2]=buffB.getFloat();
-//				buffB.position(12);
 				
-				float no0=buffB.getShort();
-				float no1=buffB.getShort();
-				float no2=buffB.getShort();
+				no[off+0]=buffB.getShort();
+				no[off+1]=buffB.getShort();
+				no[off+2]=buffB.getShort();
 				
-				float length=(float)Math.sqrt(no0*no0+no1*no1+no2*no2);
-				no[off+0]=no0/length;
-				no[off+1]=no1/length;
-				no[off+2]=no2/length;
 			}
 
 //			LogUtil.println(co);
