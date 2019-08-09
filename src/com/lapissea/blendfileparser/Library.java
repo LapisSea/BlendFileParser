@@ -14,7 +14,7 @@ public class Library implements BlendFile.Translator{
 	@Override
 	public void translate(Struct.Instance data){
 		name=data.name();
-		var id=data.getInstance("id");
+		Struct.Instance id=data.getInstance("id");
 		path=data.getString("name");
 		thisBlend=data.blend;
 	}

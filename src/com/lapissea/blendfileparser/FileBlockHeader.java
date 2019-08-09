@@ -8,6 +8,8 @@ import static com.lapissea.blendfileparser.BlockCode.*;
 
 public class FileBlockHeader{
 	
+	public static final FileBlockHeader[] NO_BLOCKS=new FileBlockHeader[0];
+	
 	WeakReference<Object> bodyCache;
 	
 	public final  BlockCode code;

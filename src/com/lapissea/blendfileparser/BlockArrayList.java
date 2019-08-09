@@ -1,6 +1,5 @@
 package com.lapissea.blendfileparser;
 
-import com.lapissea.util.LogUtil;
 import com.lapissea.util.NotNull;
 import com.lapissea.util.UtilL;
 
@@ -28,7 +27,7 @@ class BlockArrayList<T> extends AbstractList<T> implements RandomAccess{
 	}
 	
 	private void grow(int size){
-		var old=data;
+		Object[] old=data;
 		data=new Object[size];
 		System.arraycopy(old, 0, data, 0, old.length);
 	}
@@ -65,7 +64,7 @@ class BlockArrayList<T> extends AbstractList<T> implements RandomAccess{
 	@SuppressWarnings("unchecked")
 	@Override
 	public T get(int index){
-		Objects.checkIndex(index, size());
+		if(index<0||index >= size()) throw new IndexOutOfBoundsException(index+" "+size());
 		readTo(index);
 		return (T)data[index];
 	}

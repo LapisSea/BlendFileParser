@@ -13,7 +13,7 @@ class StructLinkedList implements List<Struct.Instance>{
 	public StructLinkedList(Struct.Instance first){
 		
 		if(first==null){
-			data=List.of();
+			data=Collections.emptyList();
 			done=true;
 		}
 		
@@ -40,8 +40,8 @@ class StructLinkedList implements List<Struct.Instance>{
 	}
 	
 	private void read(){
-		var last=data.get(data.size()-1);
-		var next=last.getInstance("next");
+		Struct.Instance last=data.get(data.size()-1);
+		Struct.Instance next=last.getInstance("next");
 		
 		if(next==null){
 			finish();

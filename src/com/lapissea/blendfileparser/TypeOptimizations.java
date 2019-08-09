@@ -6,11 +6,10 @@ import com.lapissea.util.function.TriFunction;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.nio.FloatBuffer;
+import java.util.*;
 
+import static com.lapissea.blendfileparser.Util.*;
 import static com.lapissea.util.UtilL.*;
 
 @SuppressWarnings({"unchecked", "PointlessArithmeticExpression"})
@@ -193,14 +192,15 @@ public class TypeOptimizations{
 		
 		@Override
 		protected void readValues(int count, BlendInputStream in) throws IOException{
-			var buffB=ByteBuffer.allocate(struct.length).order(blend.header.order);
-			var arr  =buffB.array();
-			var buff =buffB.asFloatBuffer();
+			ByteBuffer  buffB=ByteBuffer.allocate(struct.length).order(blend.header.order);
+			byte[]      arr  =buffB.array();
+			FloatBuffer buff =buffB.asFloatBuffer();
 			
 			co=new float[count*3];
 			no=new short[count*3];
 			for(int i=0;i<count;i++){
-				in.readNBytes(arr, 0, arr.length);
+				readNBytes(in, arr);
+				
 				int off=i*3;
 				buffB.position(0);
 				co[off+0]=buffB.getFloat();
@@ -392,9 +392,9 @@ public class TypeOptimizations{
 		@Override
 		protected void readValues(int count, BlendInputStream in) throws IOException{
 			rgba=new byte[count*4];
-			var bb=ByteBuffer.wrap(rgba);
+			ByteBuffer bb=ByteBuffer.wrap(rgba);
 			while(bb.hasRemaining()){
-				var read=in.read(bb.array(), bb.position(), bb.remaining());
+				int read=in.read(bb.array(), bb.position(), bb.remaining());
 				if(read==-1) throw new IOException("UEOF");
 				bb.position(bb.position()+read);
 			}
@@ -497,21 +497,21 @@ public class TypeOptimizations{
 			weights=new float[count][];
 			weightIndices=new short[count][];
 			for(int i=0;i<count;i++){
-				var w        =DataParser.parse(new DnaType("MDeformWeight", 1, false, null), in, blend);
-				int totweight=in.read4BInt();
-				int flag     =in.read4BInt();
+				Object w        =DataParser.parse(new DnaType("MDeformWeight", 1, false, null), in, blend);
+				int    totweight=in.read4BInt();
+				int    flag     =in.read4BInt();
 				
 				if(w instanceof Struct.Instance){
 					Assert(totweight==1);
-					var ins=((Struct.Instance)w);
+					Struct.Instance ins=((Struct.Instance)w);
 					weights[i]=new float[]{ins.getFloat("weight")};
 					weightIndices[i]=new short[]{ins.getShort("def_nr")};
 				}else{
-					var l=(List<Struct.Instance>)w;
+					List<Struct.Instance> l=(List<Struct.Instance>)w;
 					Assert(totweight==l.size());
 					Assert(l.size()<Short.MAX_VALUE);
-					var ws =weights[i]=new float[l.size()];
-					var ids=weightIndices[i]=new short[l.size()];
+					float[] ws =weights[i]=new float[l.size()];
+					short[] ids=weightIndices[i]=new short[l.size()];
 					for(int i1=l.size()-1;i1 >= 0;i1--){
 						Struct.Instance ins=l.get(i1);
 						ws[i1]=ins.getFloat("weight");
@@ -566,11 +566,10 @@ public class TypeOptimizations{
 	                             Map<String, TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposite>> map, String name,
 	                             TriFunction<Struct, FileBlockHeader, BlendFile, InstanceComposite> func,
 	                             String... names){
-		var struct=dna.getStruct(name);
+		Struct struct=dna.getStruct(name);
 		if(names.length==0) throw new RuntimeException();
-		//noinspection EqualsBetweenInconvertibleTypes
-		if(!struct.fields.equals(List.of(names))){
-			throw new RuntimeException("Non standard data! Need:\n"+List.of(names)+"\nGot:\n"+struct);
+		if(!struct.fields.equals(Arrays.asList(names))){
+			throw new RuntimeException("Non standard data! Need:\n"+Arrays.asList(names)+"\nGot:\n"+struct);
 		}
 		
 		map.put(name, func);

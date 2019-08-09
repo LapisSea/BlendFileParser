@@ -65,7 +65,7 @@ public class DnaType{
 	public DnaType dearrify(){
 		if(!isArray()) return this;
 		
-		var newSiz=new ArrayList<>(arraySize);
+		ArrayList<Integer> newSiz=new ArrayList<>(arraySize);
 		newSiz.remove(0);
 		newSiz.trimToSize();
 		
@@ -89,14 +89,34 @@ public class DnaType{
 		
 		int s;
 		if(isFunc) s=blend.header.ptrSize;
-		else s=switch(name){
-			case "void" -> blend.header.ptrSize;
-			case "char", "uchar" -> 1;
-			case "short", "ushort" -> 2;
-			case "int", "float" -> 4;
-			case "uint64_t", "int64_t", "long", "double" -> 8;
-			default -> getStruct(blend).length;
-		};
+		else{
+			switch(name){
+			case "void":
+				s=blend.header.ptrSize;
+				break;
+			case "char":
+			case "uchar":
+				s=1;
+				break;
+			case "short":
+			case "ushort":
+				s=2;
+				break;
+			case "int":
+			case "float":
+				s=4;
+				break;
+			case "uint64_t":
+			case "int64_t":
+			case "long":
+			case "double":
+				s=8;
+				break;
+			default:
+				s=getStruct(blend).length;
+				break;
+			}
+		}
 		
 		if(arraySize!=null){
 			for(Integer i : arraySize){

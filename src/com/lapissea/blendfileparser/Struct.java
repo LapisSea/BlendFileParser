@@ -13,14 +13,13 @@ import java.util.stream.IntStream;
 
 import static java.nio.charset.StandardCharsets.*;
 
-@SuppressWarnings("ALL")
 public class Struct{
 	
 	static{
 		TextUtil.IN_TABLE_TO_STRINGS.register(Struct.Instance.class, (Instance inst)->{
 			if(inst.struct().type.name.equals("ID")) return inst.name();
 			if(!inst.isAllocated()) return inst.toString();
-			var name=inst.name();
+			String name=inst.name();
 			if(name!=null) return name;
 			
 			return inst.entrySet().stream().filter(e->!e.getKey().startsWith("_pad")&&e.getValue()!=null&&!"null".equals(e.getValue()))
@@ -72,10 +71,10 @@ public class Struct{
 	}
 	
 	public static final List<String> IGNORE_VALUES=new ArrayList<>(
-			List.of("runtime",
-			        "_pad", "_pad0", "_pad1", "_pad2", "_pad3", "_pad4",
-			        "py_instance"
-			       ));
+			Arrays.asList("runtime",
+			              "_pad", "_pad0", "_pad1", "_pad2", "_pad3", "_pad4",
+			              "py_instance"
+			             ));
 	
 	public static final Struct.Instance[] INS={};
 	
@@ -84,7 +83,12 @@ public class Struct{
 	
 	private static final Stack<Instance> INSTANCE_STACK=new Stack<>();
 	private static final String          NO_NAME       =new String(new char[0]);
-	private static final ID              NO_ID         =new ID(new Object());
+	private static final ID<?>           NO_ID         =new ID<>(new Object());
+	
+	private static final List<String> TYPE_NAMES_2_PREFIX=Arrays.asList("Object", "Mesh", "Material", "bNodeTree", "Scene", "World",
+	                                                                    "wmWindowManager", "WorkSpace", "bScreen", "FreestyleLineStyle",
+	                                                                    "Lamp", "Brush", "Collection", "Camera", "Image", "bGPdata", "Key",
+	                                                                    "Library");
 	
 	public class Instance implements Map<String, Object>{
 		
@@ -118,12 +122,13 @@ public class Struct{
 			return values!=null;
 		}
 		
-		protected long validLength() throws IOException{
+		protected long validLength(){
 			return length;
 		}
 		
 		private void allocateDone(Object[] values){
 			if(values.length!=fields.size()) throw new RuntimeException();//bruh moment
+			
 			this.values=new AbstractList<Object>(){
 				boolean[] safe=new boolean[values.length];
 				
@@ -131,7 +136,7 @@ public class Struct{
 					if(v==null) return null;
 					
 					if(v instanceof Instance){
-						var inst=(Instance)v;
+						Instance inst=(Instance)v;
 						if(inst.is("ID")){
 							Library lib=inst.getInstanceTranslated("lib");
 							if(lib!=null) return lib.get(inst.getString("name"));
@@ -175,11 +180,13 @@ public class Struct{
 						if(in.position()>dataStart+dataSize){
 							LogUtil.printlnEr("Likely corruption of "+(name()==null?type:type+"("+name()+")")+"? outside block body", dataStart+dataSize+" / "+in.position());
 							LogUtil.println(this);
+							//noinspection AutoBoxing
 							LogUtil.println(dataStart, dataSize);
 							System.exit(0);
 						}
-						var length=validLength();
+						long length=validLength();
 						if(read!=length){
+							//noinspection AutoBoxing
 							LogUtil.printlnEr("Likely corruption of "+(name()==null?type:type+"("+name()+")")+"? read:", read, "but type size is:", length);
 							LogUtil.println(this);
 							System.exit(0);
@@ -203,7 +210,7 @@ public class Struct{
 				String ds=Double.toString(Math.round(d*100.0)/100.0);
 				if(ds.endsWith(".0")) ds=ds.substring(0, ds.length()-2);
 				
-				LogUtil.printTable("Allocated subject", struct().type.name+"("+name()+")", "Start at", "0x"+Long.toHexString(dataStart), "Object size", ds+List.of("b", "Kb", "Mb", "GB", "TB").get(level));
+				LogUtil.printTable("Allocated subject", struct().type.name+"("+name()+")", "Start at", "0x"+Long.toHexString(dataStart), "Object size", ds+Arrays.asList("b", "Kb", "Mb", "GB", "TB").get(level));
 			}
 			
 			return this;
@@ -214,8 +221,8 @@ public class Struct{
 		
 		public ID id(){
 			if(idCache==null){
-				var n=fullName();
-				idCache=n==null?NO_ID:new ID(blend, n);
+				String n=fullName();
+				idCache=n==null?NO_ID:new ID<>(blend, n);
 			}
 			return idCache==NO_ID?null:idCache;
 		}
@@ -225,7 +232,7 @@ public class Struct{
 			if(fullNameCache==null){
 				String fullName;
 				try{
-					var id=getInstance("id");
+					Instance id=getInstance("id");
 					fullName=id.getString("name");
 				}catch(BlendFileMissingValue|NullPointerException e){
 					try{
@@ -240,26 +247,26 @@ public class Struct{
 				fullNameCache=fullName;
 			}
 			
+			//noinspection StringEquality
 			return fullNameCache==NO_NAME?null:fullNameCache;
 		}
 		
 		public String name(){
 			if(nameCache==null){
-				var nameFull=fullName();
+				String nameFull=fullName();
 				if(nameFull==null){
 					nameCache=NO_NAME;
 					return null;
 				}
 				
-				nameCache=nameFull.substring(switch(struct().type.name){
-					case "Object", "Mesh", "Material", "bNodeTree", "Scene", "World",
-							     "wmWindowManager", "WorkSpace", "bScreen", "FreestyleLineStyle",
-							     "Lamp", "Brush", "Collection", "Camera", "Image", "bGPdata", "Key",
-							     "Library" -> 2;
-					default -> 0;
-				});
+				if(TYPE_NAMES_2_PREFIX.contains(struct().type.name)){
+					nameCache=nameFull.substring(2);
+				}else{
+					nameCache=nameFull;
+				}
 			}
 			
+			//noinspection StringEquality
 			return nameCache==NO_NAME?null:nameCache;
 		}
 		
@@ -271,9 +278,9 @@ public class Struct{
 			synchronized(INSTANCE_STACK){
 				INSTANCE_STACK.push(this);
 				try{
-					result+=IntStream.range(0, values.size()).filter(i->!IGNORE_VALUES.contains(fields.get(i))).mapToObj(i->{
-						var f=fields.get(i);
-						var v=values.get(i);
+					result+=IntStream.range(0, values.size()).filter(i->!IGNORE_VALUES.contains(fields.get(i).name)).mapToObj(i->{
+						Field  f=fields.get(i);
+						Object v=values.get(i);
 						if(v instanceof String){
 							v="\""+((String)v).replace("\n", "\\n")+'"';
 						}
@@ -291,18 +298,19 @@ public class Struct{
 								break prettyfy;
 							}
 							
-							if(INSTANCE_STACK.contains(v)){
-								v="<circular_reference>";
-								break prettyfy;
-							}
-							
 							if(v instanceof Instance){
 								Instance inst=(Instance)v;
+								
+								if(INSTANCE_STACK.contains(inst)){
+									v="<circular_reference>";
+									break prettyfy;
+								}
+								
 								if(!inst.isAllocated()){
 									v=v.toString();
 									break prettyfy;
 								}
-								var s=((Instance)v).struct();
+								Struct s=((Instance)v).struct();
 								if(INSTANCE_STACK.stream().anyMatch(i1->i1.struct().equals(s))) v=((Instance)v).struct().type.name+"<hidden>";
 							}
 						}
@@ -337,14 +345,15 @@ public class Struct{
 		}
 		
 		public <T extends BlendFile.Translator> List<T> getInstanceListTranslated(Object key){
-			var l=getInstanceList(key);
+			List<Instance> l=getInstanceList(key);
 			return l==null?null:l.stream().map(blend::<T>translate).collect(Collectors.toList());
 		}
 		
+		@SuppressWarnings("unchecked")
 		public List<Instance> getInstanceList(Object key){
-			var o=get(key);
-			if(o instanceof Instance) return List.of((Instance)o);
-			if(o instanceof Instance[]) return List.of((Instance[])o);
+			Object o=get(key);
+			if(o instanceof Instance) return Collections.singletonList((Instance)o);
+			if(o instanceof Instance[]) return Arrays.asList((Instance[])o);
 			return (List<Instance>)o;
 		}
 		
@@ -383,7 +392,7 @@ public class Struct{
 		}
 		
 		public <T extends BlendFile.Translator> T getInstanceTranslated(Object key){
-			var inst=getInstance(key);
+			Instance inst=getInstance(key);
 			return inst==null?null:inst.translate();
 		}
 		
@@ -401,6 +410,7 @@ public class Struct{
 			return new String(dat, 0, i, UTF_8);
 		}
 		
+		@SuppressWarnings("unchecked")
 		public <T> T type(Object key){
 			return (T)get(key);
 		}
@@ -410,7 +420,7 @@ public class Struct{
 			Integer id=fieldIndex.get(key);
 			if(id==null) throw new BlendFileMissingValue("\""+key+"\" field missing in \""+type+"\"{"+fields.stream().map(field->field.name).collect(Collectors.joining(", "))+"}");
 			
-			var v=values().get(id);
+			Object v=values().get(id);
 			if(v instanceof Struct.Instance&&((Struct.Instance)v).struct().type.name.equals("StrayPointer")){
 				throw new BlendFileMissingValue("\""+key+"\" is a stray pointer!");
 			}
@@ -418,19 +428,19 @@ public class Struct{
 		}
 		
 		public long getLong(Object key){
-			var k=get(key);
+			Object k=get(key);
 			if(k instanceof Long) return (Long)k;
 			else return ((Number)k).longValue();
 		}
 		
 		public int getInt(Object key){
-			var k=get(key);
+			Object k=get(key);
 			if(k instanceof Integer) return (Integer)k;
 			else return ((Number)k).intValue();
 		}
 		
 		public byte getByte(Object key){
-			var k=get(key);
+			Object k=get(key);
 			if(k instanceof Byte) return (Byte)k;
 			else return ((Number)k).byteValue();
 		}
@@ -440,13 +450,13 @@ public class Struct{
 		}
 		
 		public short getShort(Object key){
-			var k=get(key);
+			Object k=get(key);
 			if(k instanceof Short) return (Short)k;
 			else return ((Number)k).shortValue();
 		}
 		
 		public float getFloat(Object key){
-			var k=get(key);
+			Object k=get(key);
 			if(k instanceof Float) return (Float)k;
 			else return ((Number)k).floatValue();
 		}
@@ -471,15 +481,15 @@ public class Struct{
 			throw new UnsupportedOperationException();
 		}
 		
+		@NotNull
 		@Override
-		public @NotNull
-		Set<String> keySet(){
+		public Set<String> keySet(){
 			return fieldIndex.keySet();
 		}
 		
+		@NotNull
 		@Override
-		public @NotNull
-		List<Object> values(){
+		public List<Object> values(){
 			allocate();
 			return values;
 		}
@@ -487,23 +497,22 @@ public class Struct{
 		
 		private class S implements Set<Entry<String, Object>>{
 			
-			Entry<String, Object>[] data=IntStream.range(0, size()).mapToObj(i->{
-				return new Entry<String, Object>(){
-					@Override
-					public String getKey(){
-						return fields.get(i).name;
-					}
-					
-					@Override
-					public Object getValue(){
-						return values().get(i);
-					}
-					
-					@Override
-					public Object setValue(Object value){
-						throw new UnsupportedOperationException();
-					}
-				};
+			@SuppressWarnings("unchecked")
+			Entry<String, Object>[] data=IntStream.range(0, size()).mapToObj(i->new Entry<String, Object>(){
+				@Override
+				public String getKey(){
+					return fields.get(i).name;
+				}
+				
+				@Override
+				public Object getValue(){
+					return values().get(i);
+				}
+				
+				@Override
+				public Object setValue(Object value){
+					throw new UnsupportedOperationException();
+				}
 			}).toArray(Entry[]::new);
 			
 			@Override
@@ -549,22 +558,23 @@ public class Struct{
 				return i;
 			}
 			
+			@NotNull
 			@Override
-			public @NotNull
-			Object[] toArray(){
+			public Object[] toArray(){
 				return data.clone();
 			}
 			
 			@NotNull
 			@Override
 			public <T> T[] toArray(@NotNull T[] a){
-				if(a.length!=size()) a=(T[])Array.newInstance(a.getClass().getComponentType(), size());
+				Object[] arr;
+				if(a.length==size()) arr=a;
+				else arr=(Object[])Array.newInstance(a.getClass().getComponentType(), size());
 				
-				for(int i1=0;i1<a.length;i1++){
-					a[i1]=(T)data[i1];
-				}
+				System.arraycopy(data, 0, arr, 0, a.length);
 				
-				return a;
+				//noinspection unchecked
+				return (T[])arr;
 			}
 			
 			@Override
@@ -605,9 +615,9 @@ public class Struct{
 		
 		private S set;
 		
+		@NotNull
 		@Override
-		public @NotNull
-		Set<Entry<String, Object>> entrySet(){
+		public Set<Entry<String, Object>> entrySet(){
 			if(set==null) set=new S();
 			
 			return set;
@@ -642,7 +652,10 @@ public class Struct{
 		
 		private int calcHashCode(){
 			
-			if(dataStart!=-1) return Objects.hash(dataStart, struct());
+			if(dataStart!=-1){
+				//noinspection AutoBoxing
+				return Objects.hash(dataStart, struct());
+			}
 			
 			String name=fullName();
 			if(name!=null) return name.hashCode();
@@ -692,13 +705,14 @@ public class Struct{
 	private final int                  hash;
 	
 	private static Map<String, Integer> makeIndex(List<Field> fields){
-		var fieldIndex=new HashMap<String, Integer>(fields.size());
+		HashMap<String, Integer> fieldIndex=new HashMap<>(fields.size());
 		
 		for(int i=0;i<fields.size();i++){
 			Field f=fields.get(i);
 			if(fieldIndex.containsKey(f.name)){
 				throw new RuntimeException(f.name+"\n"+TextUtil.toTable(fields));
 			}
+			//noinspection AutoBoxing
 			fieldIndex.put(f.name, i);
 		}
 		
@@ -709,12 +723,12 @@ public class Struct{
 		DnaType type;
 		short   length;
 		{
-			var typeId=in.read2BInt();
+			short typeId=in.read2BInt();
 			type=new DnaType(types[typeId], 0, false, null);
 			length=lengths[typeId];
 		}
 		
-		var variables=new Field[in.read2BInt()];
+		Field[] variables=new Field[in.read2BInt()];
 		
 		for(int i=0;i<variables.length;i++){
 			variables[i]=new Field(types[in.read2BInt()], names[in.read2BInt()]);

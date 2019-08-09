@@ -3,6 +3,7 @@ package com.lapissea.blendfileparser;
 import com.lapissea.blendfileparser.exceptions.BlendFileIOException;
 import com.lapissea.util.NotNull;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -34,8 +35,8 @@ public class BlendInputStream extends InputStream{
 	}
 	
 	private ByteBuffer read(ByteBuffer bb) throws IOException{
-		var a   =bb.array();
-		var read=read(a);
+		byte[] a   =bb.array();
+		int    read=read(a);
 		if(read==-1) throw new BlendFileIOException("Unexpected file end");
 		if(read!=a.length){
 			bb.position(read);
@@ -45,8 +46,8 @@ public class BlendInputStream extends InputStream{
 				bb.put((byte)i1);
 			}
 		}
-		
-		return bb.position(0);
+		bb.position(0);
+		return bb;
 	}
 	
 	String read4ByteString() throws IOException{
@@ -82,7 +83,7 @@ public class BlendInputStream extends InputStream{
 	}
 	
 	int read1BInt() throws IOException{
-		var b=read();
+		int b=read();
 		if(b==-1) throw new BlendFileIOException("Unexpected file end");
 		return b;
 	}
@@ -102,9 +103,10 @@ public class BlendInputStream extends InputStream{
 			int code;
 			while((code=read())!=0){
 				if(!bb.hasRemaining()){
-					var old=bb;
+					ByteBuffer old=bb;
 					bb=ByteBuffer.allocate(bb.capacity()<<1);
-					bb.put(old.flip());
+					old.flip();
+					bb.put(old);
 				}
 				bb.put((byte)code);
 			}
@@ -116,14 +118,14 @@ public class BlendInputStream extends InputStream{
 	
 	@Override
 	public int read() throws IOException{
-		var b=in.read();
+		int b=in.read();
 		if(b!=-1) position++;
 		return b;
 	}
 	
 	@Override
 	public int read(@NotNull byte[] b, int off, int len) throws IOException{
-		var read=in.read(b, off, len);
+		int read=in.read(b, off, len);
 		if(read!=-1) position+=read;
 		return read;
 	}
@@ -135,7 +137,7 @@ public class BlendInputStream extends InputStream{
 	
 	@Override
 	public long skip(long n) throws IOException{
-		var skipped=in.skip(n);
+		long skipped=in.skip(n);
 		position+=skipped;
 		return skipped;
 	}
@@ -147,5 +149,23 @@ public class BlendInputStream extends InputStream{
 	
 	public long position(){
 		return position;
+	}
+	
+	
+	public void skipNBytes(long n) throws IOException{
+		if(n<=0) return;
+		
+		long ns=skip(n);
+		if(ns >= 0&&ns<n){
+			n-=ns;
+			while(n>0&&read()!=-1){//TODO: can maybe swap with continuous skipping?
+				n--;
+			}
+			if(n!=0){
+				throw new EOFException("Unexpected EOF");
+			}
+		}else if(ns!=n){
+			throw new IOException("Unable to skip exactly");
+		}
 	}
 }

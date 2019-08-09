@@ -8,6 +8,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
+import static com.lapissea.blendfileparser.Util.*;
 import static java.nio.ByteOrder.*;
 
 public class BlendFileHeader{
@@ -21,22 +22,31 @@ public class BlendFileHeader{
 	
 	BlendFileHeader(InputStream in, boolean compressed) throws IOException{
 		this.compressed=compressed;
-		
-		if(!Arrays.equals(in.readNBytes(7), "BLENDER".getBytes(StandardCharsets.US_ASCII))){
+		if(!Arrays.equals(readNBytes(in, 7), "BLENDER".getBytes(StandardCharsets.US_ASCII))){
 			throw new BlendFileIOException("Not a blend file");
 		}
 		
-		ptrSize=switch(in.read()){
-			case '-' -> 8;
-			case '_' -> 4;
-			default -> throw new BlendFileIOException("Unknown pointer size");
-		};
+		switch(in.read()){
+		case '-':
+			ptrSize=8;
+			break;
+		case '_':
+			ptrSize=4;
+			break;
+		default:
+			throw new BlendFileIOException("Unknown pointer size");
+		}
 		
-		order=switch(in.read()){
-			case 'V' -> BIG_ENDIAN;
-			case 'v' -> LITTLE_ENDIAN;
-			default -> throw new BlendFileIOException("Unknown byte order");
-		};
+		switch(in.read()){
+		case 'V':
+			order=BIG_ENDIAN;
+			break;
+		case 'v':
+			order=LITTLE_ENDIAN;
+			break;
+		default:
+			throw new BlendFileIOException("Unknown byte order");
+		}
 		
 		version=new byte[]{(byte)(in.read()-'0'), (byte)(in.read()-'0'), (byte)(in.read()-'0')};
 	}

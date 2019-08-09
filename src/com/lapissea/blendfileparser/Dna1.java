@@ -28,15 +28,15 @@ public class Dna1{
 		require(in, "SDNA");
 		
 		require(in, "NAME");
-		int size =in.read4BInt();
-		var names=in.readNullTerminatedUTF8Array(size);
+		int      size =in.read4BInt();
+		String[] names=in.readNullTerminatedUTF8Array(size);
 		
 		require(in, "TYPE");
 		size=in.read4BInt();
-		var types=in.readNullTerminatedUTF8Array(size);
+		String[] types=in.readNullTerminatedUTF8Array(size);
 		
 		require(in, "TLEN");
-		var lengths=in.readShortArray(size);
+		short[] lengths=in.readShortArray(size);
 		
 		
 		require(in, "STRC");
@@ -45,7 +45,7 @@ public class Dna1{
 		structs=new Struct[size];
 		structNameLookup=new HashMap<>(structs.length);
 		for(int i=0;i<structs.length;i++){
-			var struct=Struct.read(in, i, names, types, lengths);
+			Struct struct=Struct.read(in, i, names, types, lengths);
 			structs[i]=struct;
 			structNameLookup.put(struct.type.name, struct);
 		}
@@ -64,7 +64,7 @@ public class Dna1{
 	
 	@NotNull
 	public Struct getStruct(String name){
-		var s=structNameLookup.get(name);
+		Struct s=structNameLookup.get(name);
 		if(s==null){
 			throw new BlendFileUnknownType("Unkown type: "+name);
 		}

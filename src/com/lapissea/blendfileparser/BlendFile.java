@@ -14,7 +14,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.function.Consumer;
@@ -25,6 +27,7 @@ import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 
 import static com.lapissea.blendfileparser.BlockCode.*;
+import static com.lapissea.blendfileparser.FileBlockHeader.*;
 import static com.lapissea.util.UtilL.*;
 
 public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
@@ -70,8 +73,8 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		this.name=blendName;
 		id=new ID<>(this);
 		
-		try(var blendFile=openSource()){
-			var supportsMark=blendFile.markSupported();
+		try(InputStream blendFile=openSource()){
+			boolean supportsMark=blendFile.markSupported();
 			
 			if(supportsMark) blendFile.mark(BlendFileHeader.BYTE_SIZE);
 			BlendFileHeader header;
@@ -83,7 +86,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 					header=new BlendFileHeader(new GZIPInputStream(blendFile), true);
 				}else{
 					blendFile.close();
-					try(var s=openSource()){
+					try(InputStream s=openSource()){
 						header=new BlendFileHeader(new GZIPInputStream(s), true);
 					}
 				}
@@ -92,17 +95,17 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		}
 		
 		
-		strayPointerType=new Struct(-1, (short)header.ptrSize, new DnaType("StrayPointer", 0, false, null), List.of(new Field("void", "badPtr")));
+		strayPointerType=new Struct(-1, (short)header.ptrSize, new DnaType("StrayPointer", 0, false, null), Collections.singletonList(new Field("void", "badPtr")));
 		
-		var blockBuilder=new LinkedList<FileBlockHeader>();
+		LinkedList<FileBlockHeader> blockBuilder=new LinkedList<>();
 		{
 			Dna1[]         dna      ={null};
 			Consumer<Dna1> dnaSetter=d->dna[0]=d;
 			
-			try(var in=reopen()){
+			try(BlendInputStream in=reopen()){
 				in.skipNBytes(BlendFileHeader.BYTE_SIZE);
 				while(true){
-					var block=new FileBlockHeader(in, dnaSetter);
+					FileBlockHeader block=new FileBlockHeader(in, dnaSetter);
 					if(block.code==END) break;
 					blockBuilder.add(block);
 				}
@@ -113,7 +116,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		
 		typeOptimizations=TypeOptimizations.get(this.dna);
 		
-		blocks=blockBuilder.toArray(FileBlockHeader[]::new);
+		blocks=blockBuilder.toArray(NO_BLOCKS);
 		
 		blockPtrIndex=new HashMap<>(blocks.length);
 		for(FileBlockHeader b : blocks){
@@ -142,24 +145,24 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	@SuppressWarnings("unchecked")
 	public <T, E> void registerTranslatorSwitch(@NotNull String structName, Class<?> switchClass){
 		try{
-			var waysName      ="TRANSLATOR_SWITCH";
-			var identifierName="translatorIdentifier";
+			String waysName      ="TRANSLATOR_SWITCH";
+			String identifierName="translatorIdentifier";
 			
-			var ways=switchClass.getDeclaredField(waysName);
+			java.lang.reflect.Field ways=switchClass.getDeclaredField(waysName);
 			ways.setAccessible(true);
-			var identifier=switchClass.getDeclaredMethod(identifierName, Struct.Instance.class);
+			Method identifier=switchClass.getDeclaredMethod(identifierName, Struct.Instance.class);
 			identifier.setAccessible(true);
 			
 			if(ways.getType()!=Map.class) throw new RuntimeException(waysName+" needs to be type of "+Map.class.getName()+": "+switchClass);
 			
 			
-			var generics=(ParameterizedType)ways.getGenericType();
-			var args    =generics.getActualTypeArguments();
+			ParameterizedType generics=(ParameterizedType)ways.getGenericType();
+			Type[]            args    =generics.getActualTypeArguments();
 			if(args[0]!=identifier.getGenericReturnType()) throw new RuntimeException(waysName+" key generic type needs to be the same as "+identifierName+" generic type: "+switchClass);
 			
 			boolean isFunc;
 			
-			var keyBase=args[1];
+			Type keyBase=args[1];
 			find:
 			try{
 				if(keyBase==Class.class){
@@ -170,9 +173,9 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 					isFunc=true;
 					break find;
 				}
-				var k1=(ParameterizedType)keyBase;
+				ParameterizedType k1=(ParameterizedType)keyBase;
 				
-				var k1raw=k1.getRawType();
+				Type k1raw=k1.getRawType();
 				
 				if(k1raw==Class.class){
 					isFunc=false;
@@ -213,8 +216,8 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	
 	public <T extends Translator, E> void registerTranslatorSwitchFunc(@NotNull String structName, @NotNull Map<E, Function<Struct.Instance, T>> ways, Function<Struct.Instance, E> identifier){
 		registerTranslator(structName, data->{
-			var id =identifier.apply(data);
-			var way=ways.get(id);
+			E                            id =identifier.apply(data);
+			Function<Struct.Instance, T> way=ways.get(id);
 			if(way==null) throw new RuntimeException("Unable to resolve switch for "+id+" in "+structName);
 			return way.apply(data);
 		});
@@ -256,7 +259,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		synchronized(instance){//need to synchronize over each instance separately to enable reading unrelated objects at the same time to preserve a high level of parallelism
 			T t=(T)translationCache.get(instance);
 			if(t==null){
-				var translator=(Function<Struct.Instance, T>)translators.get(instance.struct().type.name);
+				Function<Struct.Instance, T> translator=(Function<Struct.Instance, T>)translators.get(instance.struct().type.name);
 				if(translator==null) throw new RuntimeException("No translator for "+instance.struct().type.name);
 				
 				t=translator.apply(instance);
@@ -284,9 +287,9 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	}
 	
 	private Object parseBlock(FileBlockHeader blockHeader){
-		var struct=blockHeader.getStruct();
+		Struct struct=blockHeader.getStruct();
 		
-		var optimization=typeOptimizations.get(struct.type.name);
+		TriFunction<Struct, FileBlockHeader, BlendFile, TypeOptimizations.InstanceComposite> optimization=typeOptimizations.get(struct.type.name);
 		if(optimization!=null){
 			return optimization.apply(struct, blockHeader, this);
 		}
@@ -346,18 +349,18 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 			inCache.skipNBytes(toSkip);
 		}
 		
-		var c=inCache;
+		BlendInputStream c=inCache;
 		inCacheMap.remove(ct);
 		return c;
 	}
 	
 	private void putSource(BlendInputStream c) throws IOException{
-		var inCache=inCacheMap.put(Thread.currentThread(), c);
+		BlendInputStream inCache=inCacheMap.put(Thread.currentThread(), c);
 		if(inCache!=null) inCache.close();
 	}
 	
 	<T> T reopen(long pos, UnsafeFunction<BlendInputStream, T, IOException> session) throws IOException{
-		var s=getSourceAt(pos);
+		BlendInputStream s=getSourceAt(pos);
 		try{
 			return session.apply(s);
 		}finally{
@@ -366,7 +369,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	}
 	
 	void reopen(long pos, UnsafeConsumer<BlendInputStream, IOException> session) throws IOException{
-		var s=getSourceAt(pos);
+		BlendInputStream s=getSourceAt(pos);
 		try{
 			session.accept(s);
 		}finally{
@@ -375,7 +378,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	}
 	
 	private InputStream openSource() throws IOException{
-		var s1=source.apply(name);
+		InputStream s1=source.apply(name);
 		if(s1==null) throw new RuntimeException("missing "+name);
 		return s1;
 	}
@@ -404,13 +407,14 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 						while(toRead>0){
 							if(!fileCache.hasRemaining()){//buffer is full, need to grow
 								
-								var old=fileCache;
+								ByteBuffer old=fileCache;
 								fileCache=ByteBuffer.allocate(old.capacity()<<1);
-								fileCache.put(old.flip());
+								old.flip();
+								fileCache.put(old);
 								continue;
 							}
 							
-							var read=cacheFiller.read(fileCache.array(), fileCache.position(), fileCache.remaining());
+							int read=cacheFiller.read(fileCache.array(), fileCache.position(), fileCache.remaining());
 							fileCache.position(fileCache.position()+read);
 							
 							if(read<=0){
@@ -442,7 +446,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 				@Override
 				public int read() throws IOException{
 					ensure(1);
-					var b=fileCache.get(pos);
+					byte b=fileCache.get(pos);
 					pos++;
 					return b;
 				}
@@ -455,7 +459,7 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 	
 	@SuppressWarnings("AutoBoxing")
 	FileBlockHeader getBlock(long ptr) throws BlendFileMissingBlock{
-		var b=blockPtrIndex.get(ptr);
+		FileBlockHeader b=blockPtrIndex.get(ptr);
 		if(b==null){
 			throw new BlendFileMissingBlock("invalid block ptr: "+ptr);
 		}
@@ -497,7 +501,6 @@ public class BlendFile implements AutoCloseable, Comparable<BlendFile>{
 		return name;
 	}
 	
-	@SuppressWarnings("deprecation")
 	@Override
 	protected void finalize() throws IOException{
 		close();
