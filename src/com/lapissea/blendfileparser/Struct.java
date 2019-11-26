@@ -151,6 +151,14 @@ public class Struct{
 					if(!safe[index]){
 						values[index]=secure(values[index]);
 						safe[index]=true;
+						
+						safe:
+						{
+							for(boolean b : safe){
+								if(!b) break safe;
+							}
+							Instance.this.values=ArrayViewList.create(values).obj2;
+						}
 					}
 					return values[index];
 				}
@@ -273,7 +281,7 @@ public class Struct{
 		@Override
 		public String toString(){
 			if(!isAllocated()) return type+"<0x"+Long.toHexString(dataStart)+">";
-			if(struct().is("StrayPointer")) return "0x"+Long.toHexString(getLong("badPtr"))+" -> ?";
+			if(is("StrayPointer")) return "0x"+Long.toHexString(getLong("badPtr"))+" -> ?";
 			String result=type+"{\n";
 			synchronized(INSTANCE_STACK){
 				INSTANCE_STACK.push(this);
@@ -380,9 +388,15 @@ public class Struct{
 		public Object get(Object key, Struct struct){
 			Object o=get(key);
 			if(o==null) return null;
-			if(!(o instanceof UnknownData)) throw new RuntimeException("This data already has known type");
-			UnknownData ud=(UnknownData)o;
-			return ud.read(struct);
+			
+			if(o instanceof UnknownData){
+				UnknownData ud=(UnknownData)o;
+				return ud.read(struct);
+			}
+			
+			Instance i=(Instance)o;
+			if(!i.struct().equals(struct)) throw new ClassCastException(this.struct().type.name+"."+key+" is not "+struct.type.name);
+			return i;
 		}
 		
 		public Instance getInstance(Object key){
@@ -421,8 +435,9 @@ public class Struct{
 			if(id==null) throw new BlendFileMissingValue("\""+key+"\" field missing in \""+type+"\"{"+fields.stream().map(field->field.name).collect(Collectors.joining(", "))+"}");
 			
 			Object v=values().get(id);
-			if(v instanceof Struct.Instance&&((Struct.Instance)v).struct().type.name.equals("StrayPointer")){
-				throw new BlendFileMissingValue("\""+key+"\" is a stray pointer!");
+			if(v instanceof Instance){
+				Instance i=(Instance)v;
+				if(i.is("StrayPointer")) throw new BlendFileMissingValue("\""+key+"\" is a stray pointer!");
 			}
 			return v;
 		}
